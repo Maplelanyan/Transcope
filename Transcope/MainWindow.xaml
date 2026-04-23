@@ -128,9 +128,15 @@
                                            TextTrimming="CharacterEllipsis"
                                            Margin="0,4,20,0" />
                             </StackPanel>
-                            <Button Grid.Column="1"
-                                    Content="选择图片"
-                                    Click="PickImageButton_Click" />
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal">
+                                <Button x:Name="CaptureScreenButton"
+                                        Content="截图"
+                                        Click="CaptureScreenButton_Click"
+                                        Margin="0,0,10,0" />
+                                <Button Content="选择图片"
+                                        Click="PickImageButton_Click" />
+                            </StackPanel>
                         </Grid>
 
                         <Border Grid.Row="1"
@@ -198,7 +204,9 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
+                            <RowDefinition Height="1.05*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="0.85*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
@@ -227,6 +235,11 @@
                                         Content="开始 OCR"
                                         Click="RunOcrButton_Click"
                                         IsEnabled="False" />
+                                <Button x:Name="TranslateButton"
+                                        Content="翻译"
+                                        Click="TranslateButton_Click"
+                                        IsEnabled="False"
+                                        Margin="10,0,0,0" />
                             </StackPanel>
                         </DockPanel>
 
@@ -248,7 +261,75 @@
                                      Text="OCR 结果会显示在这里。" />
                         </Border>
 
-                        <Grid Grid.Row="2">
+                        <Grid Grid.Row="2"
+                              Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="0.8*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="1.2*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel>
+                                <TextBlock Text="目标语言"
+                                           Foreground="{StaticResource InkBrush}"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6" />
+                                <ComboBox x:Name="TargetLanguageBox"
+                                          ToolTip="选择 DeepSeek Chat 翻译输出语言">
+                                    <ComboBoxItem Content="简体中文"
+                                                  Tag="zh-Hans" />
+                                    <ComboBoxItem Content="English"
+                                                  Tag="en" />
+                                    <ComboBoxItem Content="日本語"
+                                                  Tag="ja" />
+                                    <ComboBoxItem Content="한국어"
+                                                  Tag="ko" />
+                                    <ComboBoxItem Content="繁體中文"
+                                                  Tag="zh-Hant" />
+                                    <ComboBoxItem Content="Français"
+                                                  Tag="fr" />
+                                    <ComboBoxItem Content="Deutsch"
+                                                  Tag="de" />
+                                    <ComboBoxItem Content="Español"
+                                                  Tag="es" />
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="DeepSeek API Key"
+                                           Foreground="{StaticResource InkBrush}"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6" />
+                                <PasswordBox x:Name="DeepSeekApiKeyBox"
+                                             MinHeight="38"
+                                             Padding="10,8"
+                                             FontSize="14"
+                                             BorderBrush="#CDBFAD"
+                                             BorderThickness="1"
+                                             ToolTip="留空时读取 DEEPSEEK_API_KEY 环境变量" />
+                            </StackPanel>
+
+                        </Grid>
+
+                        <Border Grid.Row="3"
+                                Margin="0,0,0,12"
+                                Background="#FDF7EB"
+                                BorderBrush="{StaticResource LineBrush}"
+                                BorderThickness="2">
+                            <TextBox x:Name="TranslationTextBox"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     BorderThickness="0"
+                                     Background="Transparent"
+                                     FontFamily="Cascadia Mono"
+                                     FontSize="15"
+                                     MinHeight="0"
+                                     Text="翻译结果会显示在这里。" />
+                        </Border>
+
+                        <Grid Grid.Row="4">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />

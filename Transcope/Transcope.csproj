@@ -11,7 +11,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Transcope.Capture\Transcope.Capture.csproj" />
     <ProjectReference Include="..\Transcope.Ocr\Transcope.Ocr.csproj" />
+    <ProjectReference Include="..\Transcope.Translate\Transcope.Translate.csproj" />
   </ItemGroup>
 
   <ItemGroup>
