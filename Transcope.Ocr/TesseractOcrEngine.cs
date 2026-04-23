@@ -10,6 +10,10 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
 {
     private const string DefaultLanguage = "eng";
     private const string TessdataDirectoryName = "tessdata";
+    private const float PreferredPreprocessScale = 2.0f;
+    private const int MaxPreprocessedImageDimension = 3200;
+    private const int TesseractInputDpi = 300;
+    private const float MinimumPreprocessedAverageConfidence = 35;
 
     private static readonly Dictionary<string, string> LanguageMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -84,11 +88,161 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
     private static OcrRecognitionResult RecognizePngBytes(byte[] imageBytes, string language)
     {
         using TesseractEngine engine = CreateEngineOrThrow(language);
+        engine.SetVariable("user_defined_dpi", TesseractInputDpi);
+
         using Pix pix = Pix.LoadFromMemory(imageBytes);
+        using PreprocessedPix preprocessedPix = PreprocessPix(pix);
+
+        OcrRecognitionResult preprocessedResult = RecognizePix(
+            engine,
+            preprocessedPix.Image,
+            language,
+            preprocessedPix.CoordinateScale);
+
+        if (!ShouldRetryOriginalImage(preprocessedResult))
+        {
+            return preprocessedResult;
+        }
+
+        OcrRecognitionResult originalResult = RecognizePix(engine, pix, language, coordinateScale: 1);
+        return ScoreResult(originalResult) > ScoreResult(preprocessedResult)
+            ? originalResult
+            : preprocessedResult;
+    }
+
+    private static OcrRecognitionResult RecognizePix(
+        TesseractEngine engine,
+        Pix pix,
+        string language,
+        double coordinateScale)
+    {
         using Page page = engine.Process(pix, PageSegMode.Auto);
 
         string tsv = page.GetTsvText(0);
-        return ParseTsv(tsv, language);
+        return ParseTsv(tsv, language, coordinateScale);
+    }
+
+    private static PreprocessedPix PreprocessPix(Pix source)
+    {
+        List<Pix> ownedPixes = [];
+
+        try
+        {
+            Pix current = source;
+            double coordinateScale = 1;
+
+            float scaleFactor = ResolvePreprocessScale(source.Width, source.Height);
+            if (scaleFactor > 1.01f)
+            {
+                current = AddOwned(ownedPixes, source.Scale(scaleFactor, scaleFactor));
+                coordinateScale = 1 / scaleFactor;
+            }
+
+            Pix grayscale = current.Depth == 8 && current.Colormap is null
+                ? current
+                : AddOwned(ownedPixes, ConvertToGrayscale(current));
+
+            Pix binarized = AddOwned(ownedPixes, ApplyLocalContrastBinarization(grayscale));
+            binarized.XRes = TesseractInputDpi;
+            binarized.YRes = TesseractInputDpi;
+
+            return new PreprocessedPix(binarized, coordinateScale, ownedPixes);
+        }
+        catch
+        {
+            foreach (Pix ownedPix in ownedPixes)
+            {
+                ownedPix.Dispose();
+            }
+
+            throw;
+        }
+    }
+
+    private static Pix AddOwned(List<Pix> ownedPixes, Pix pix)
+    {
+        ownedPixes.Add(pix);
+        return pix;
+    }
+
+    private static float ResolvePreprocessScale(int width, int height)
+    {
+        int largestDimension = Math.Max(width, height);
+        if (largestDimension <= 0)
+        {
+            return 1;
+        }
+
+        float cappedScale = MaxPreprocessedImageDimension / (float)largestDimension;
+        return Math.Max(1, Math.Min(PreferredPreprocessScale, cappedScale));
+    }
+
+    private static Pix ConvertToGrayscale(Pix pix)
+    {
+        if (pix.Depth is 24 or 32)
+        {
+            return pix.ConvertRGBToGray();
+        }
+
+        return pix.ConvertTo8(cmapflag: 0);
+    }
+
+    private static Pix ApplyLocalContrastBinarization(Pix grayscale)
+    {
+        try
+        {
+            return grayscale.BinarizeSauvolaTiled(whsize: 25, factor: 0.35f, nx: 1, ny: 1);
+        }
+        catch (TesseractException)
+        {
+            return grayscale.BinarizeOtsuAdaptiveThreshold(
+                sx: 200,
+                sy: 200,
+                smoothx: 0,
+                smoothy: 0,
+                scorefract: 0.1f);
+        }
+    }
+
+    private static bool ShouldRetryOriginalImage(OcrRecognitionResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.Text))
+        {
+            return true;
+        }
+
+        float? averageConfidence = AverageWordConfidence(result);
+        return averageConfidence.HasValue &&
+            averageConfidence.Value < MinimumPreprocessedAverageConfidence;
+    }
+
+    private static double ScoreResult(OcrRecognitionResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.Text))
+        {
+            return 0;
+        }
+
+        int wordCount = result.Lines.Sum(static line => line.Words.Count);
+        float confidence = AverageWordConfidence(result) ?? MinimumPreprocessedAverageConfidence;
+
+        return confidence * 2 +
+            Math.Min(wordCount, 120) +
+            Math.Min(result.Text.Length, 600) / 12.0;
+    }
+
+    private static float? AverageWordConfidence(OcrRecognitionResult result)
+    {
+        float[] confidences = result.Lines
+            .SelectMany(static line => line.Words)
+            .Select(static word => word.Confidence)
+            .Where(static confidence => confidence.HasValue)
+            .Select(static confidence => confidence.GetValueOrDefault())
+            .ToArray();
+
+        return confidences.Length == 0
+            ? null
+            : confidences.Average();
     }
 
     private static TesseractEngine CreateEngineOrThrow(string language)
@@ -320,7 +474,10 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
         return trimmed;
     }
 
-    private static OcrRecognitionResult ParseTsv(string tsv, string language)
+    private static OcrRecognitionResult ParseTsv(
+        string tsv,
+        string language,
+        double coordinateScale = 1)
     {
         List<TesseractLineAccumulator> orderedLines = [];
         Dictionary<TesseractLineKey, TesseractLineAccumulator> lineMap = [];
@@ -359,7 +516,7 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
 
             if (row.Level == 4)
             {
-                accumulator.Boundary = ToBoundary(row.Left, row.Top, row.Width, row.Height);
+                accumulator.Boundary = ToBoundary(row.Left, row.Top, row.Width, row.Height, coordinateScale);
                 if (!string.IsNullOrWhiteSpace(row.Text))
                 {
                     accumulator.Text = row.Text;
@@ -375,7 +532,7 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
 
             accumulator.Words.Add(new OcrRecognizedWord(
                 row.Text,
-                ToBoundary(row.Left, row.Top, row.Width, row.Height),
+                ToBoundary(row.Left, row.Top, row.Width, row.Height, coordinateScale),
                 row.Confidence));
         }
 
@@ -445,9 +602,18 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
         return true;
     }
 
-    private static OcrTextBoundary ToBoundary(int left, int top, int width, int height)
+    private static OcrTextBoundary ToBoundary(
+        int left,
+        int top,
+        int width,
+        int height,
+        double coordinateScale)
     {
-        return OcrTextBoundary.FromRect(new Windows.Foundation.Rect(left, top, width, height));
+        return OcrTextBoundary.FromRect(new Windows.Foundation.Rect(
+            left * coordinateScale,
+            top * coordinateScale,
+            width * coordinateScale,
+            height * coordinateScale));
     }
 
     private readonly record struct TesseractLineKey(
@@ -469,6 +635,30 @@ internal sealed class TesseractOcrEngine : IOcrEngineAdapter
         int Height,
         float? Confidence,
         string Text);
+
+    private sealed class PreprocessedPix : IDisposable
+    {
+        private readonly IReadOnlyList<Pix> ownedPixes;
+
+        public PreprocessedPix(Pix image, double coordinateScale, IReadOnlyList<Pix> ownedPixes)
+        {
+            Image = image;
+            CoordinateScale = coordinateScale;
+            this.ownedPixes = ownedPixes;
+        }
+
+        public Pix Image { get; }
+
+        public double CoordinateScale { get; }
+
+        public void Dispose()
+        {
+            foreach (Pix ownedPix in ownedPixes)
+            {
+                ownedPix.Dispose();
+            }
+        }
+    }
 
     private sealed class TesseractLineAccumulator
     {
