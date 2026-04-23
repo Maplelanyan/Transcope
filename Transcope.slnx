@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Transcope.Capture/Transcope.Capture.csproj" />
+  <Project Path="Transcope.Ocr/Transcope.Ocr.csproj" />
+  <Project Path="Transcope.Translate/Transcope.Translate.csproj" />
+  <Project Path="Transcope/Transcope.csproj" />
+</Solution>
