@@ -1,12 +1,279 @@
-﻿<Window x:Class="Transcope.MainWindow"
+<Window x:Class="Transcope.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:Transcope"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="Transcope OCR"
+        Width="1180"
+        Height="760"
+        MinWidth="980"
+        MinHeight="640"
+        Background="#0D1110"
+        FontFamily="Bahnschrift"
+        Loaded="Window_Loaded">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PanelBrush" Color="#F7F1E6" />
+        <SolidColorBrush x:Key="InkBrush" Color="#121916" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#667069" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#F26430" />
+        <SolidColorBrush x:Key="AccentDarkBrush" Color="#A63818" />
+        <SolidColorBrush x:Key="LineBrush" Color="#D9CFBD" />
 
+        <Style TargetType="Button">
+            <Setter Property="Foreground" Value="#121916" />
+            <Setter Property="Background" Value="#F7C95F" />
+            <Setter Property="BorderBrush" Value="#121916" />
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="Padding" Value="18,10" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#F7F1E6" />
+            <Setter Property="Foreground" Value="#121916" />
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="BorderBrush" Value="#CDBFAD" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#0E1714" Offset="0" />
+                <GradientStop Color="#19322D" Offset="0.45" />
+                <GradientStop Color="#E56B36" Offset="1" />
+            </LinearGradientBrush>
+        </Grid.Background>
+
+        <Grid Margin="28">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <DockPanel Margin="0,0,0,22">
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock Text="Transcope OCR"
+                               Foreground="#FFF8E9"
+                               FontSize="42"
+                               FontWeight="Bold" />
+                    <TextBlock Text="Windows App SDK AI OCR 优先，失败回退 Windows.Media.Ocr / Tesseract"
+                               Foreground="#D6E2DB"
+                               FontSize="15"
+                               Margin="2,4,0,0" />
+                </StackPanel>
+
+                <Border DockPanel.Dock="Right"
+                        Background="#FFF8E9"
+                        BorderBrush="#121916"
+                        BorderThickness="2"
+                        Padding="14,8"
+                        VerticalAlignment="Center">
+                    <TextBlock x:Name="EngineBadgeText"
+                               Text="ENGINE: IDLE"
+                               Foreground="#121916"
+                               FontFamily="Cascadia Mono"
+                               FontSize="13"
+                               FontWeight="SemiBold" />
+                </Border>
+            </DockPanel>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.04*" />
+                    <ColumnDefinition Width="22" />
+                    <ColumnDefinition Width="0.96*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Background="{StaticResource PanelBrush}"
+                        BorderBrush="#121916"
+                        BorderThickness="3"
+                        Padding="20">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="输入图像"
+                                           Foreground="{StaticResource InkBrush}"
+                                           FontSize="24"
+                                           FontWeight="Bold" />
+                                <TextBlock x:Name="ImagePathText"
+                                           Text="选择 PNG / JPG / BMP / TIFF 图片进行识别"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,4,20,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Content="选择图片"
+                                    Click="PickImageButton_Click" />
+                        </Grid>
+
+                        <Border Grid.Row="1"
+                                Margin="0,18"
+                                Background="#151A17"
+                                BorderBrush="#121916"
+                                BorderThickness="2"
+                                ClipToBounds="True">
+                            <Grid>
+                                <Image x:Name="PreviewImage"
+                                       Stretch="Uniform" />
+                                <TextBlock x:Name="EmptyPreviewText"
+                                           Text="图片预览区"
+                                           Foreground="#8E9B92"
+                                           FontSize="28"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <Grid Grid.Row="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.1*" />
+                                <ColumnDefinition Width="14" />
+                                <ColumnDefinition Width="0.9*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel>
+                                <TextBlock Text="引擎策略"
+                                           Foreground="{StaticResource InkBrush}"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6" />
+                                <ComboBox x:Name="EngineSelectionBox"
+                                          SelectedIndex="0">
+                                    <ComboBoxItem Content="Auto - AI 优先，Legacy / Tesseract 回退"
+                                                  Tag="Auto" />
+                                    <ComboBoxItem Content="Windows App SDK AI OCR"
+                                                  Tag="WindowsAppSdk" />
+                                    <ComboBoxItem Content="Windows.Media.Ocr"
+                                                  Tag="WindowsMedia" />
+                                    <ComboBoxItem Content="Tesseract OCR"
+                                                  Tag="Tesseract" />
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="语言（Legacy / Tesseract 可用）"
+                                           Foreground="{StaticResource InkBrush}"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6" />
+                                <TextBox x:Name="LanguageTextBox"
+                                         Text="zh-Hans"
+                                         ToolTip="BCP-47，例如 zh-Hans、en-US；Tesseract 也可填 chi_sim、eng 等 traineddata code。AI OCR 当前自动检测。" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="2"
+                        Background="#FFF8E9"
+                        BorderBrush="#121916"
+                        BorderThickness="3"
+                        Padding="20">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Left">
+                                <TextBlock Text="识别结果"
+                                           Foreground="{StaticResource InkBrush}"
+                                           FontSize="24"
+                                           FontWeight="Bold" />
+                                <TextBlock x:Name="StatusText"
+                                           Text="等待图片"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           Margin="0,4,0,0" />
+                            </StackPanel>
+
+                            <StackPanel DockPanel.Dock="Right"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Right">
+                                <Button x:Name="CancelButton"
+                                        Content="取消"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Click="CancelButton_Click"
+                                        IsEnabled="False"
+                                        Margin="0,0,10,0" />
+                                <Button x:Name="RunOcrButton"
+                                        Content="开始 OCR"
+                                        Click="RunOcrButton_Click"
+                                        IsEnabled="False" />
+                            </StackPanel>
+                        </DockPanel>
+
+                        <Border Grid.Row="1"
+                                Margin="0,18"
+                                Background="#FDF7EB"
+                                BorderBrush="{StaticResource LineBrush}"
+                                BorderThickness="2">
+                            <TextBox x:Name="ResultTextBox"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     BorderThickness="0"
+                                     Background="Transparent"
+                                     FontFamily="Cascadia Mono"
+                                     FontSize="15"
+                                     MinHeight="0"
+                                     Text="OCR 结果会显示在这里。" />
+                        </Border>
+
+                        <Grid Grid.Row="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="MetricsText"
+                                       Text="Lines: 0 · Words: 0"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontFamily="Cascadia Mono"
+                                       VerticalAlignment="Center" />
+
+                            <Border Grid.Column="1"
+                                    Background="{StaticResource AccentBrush}"
+                                    BorderBrush="{StaticResource AccentDarkBrush}"
+                                    BorderThickness="2"
+                                    Padding="12,6">
+                                <TextBlock Text="DEMO MODE"
+                                           Foreground="#FFF8E9"
+                                           FontFamily="Cascadia Mono"
+                                           FontWeight="Bold" />
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
     </Grid>
 </Window>
