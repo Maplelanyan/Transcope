@@ -134,6 +134,16 @@
                                         Content="截图"
                                         Click="CaptureScreenButton_Click"
                                         Margin="0,0,10,0" />
+                                <Button x:Name="SelectRealtimeRegionButton"
+                                        Content="选择实时区域"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Click="SelectRealtimeRegionButton_Click"
+                                        Margin="0,0,10,0" />
+                                <Button x:Name="StartRealtimeButton"
+                                        Content="显示翻译框"
+                                        Click="StartRealtimeButton_Click"
+                                        IsEnabled="False"
+                                        Margin="0,0,10,0" />
                                 <Button Content="选择图片"
                                         Click="PickImageButton_Click" />
                             </StackPanel>
@@ -172,8 +182,10 @@
                                            Margin="0,0,0,6" />
                                 <ComboBox x:Name="EngineSelectionBox"
                                           SelectedIndex="0">
-                                    <ComboBoxItem Content="Auto - AI 优先，Legacy / Tesseract 回退"
+                                    <ComboBoxItem Content="Auto - PaddleOCR 优先，AI / Legacy / Tesseract 回退"
                                                   Tag="Auto" />
+                                    <ComboBoxItem Content="PaddleOCR"
+                                                  Tag="PaddleOcr" />
                                     <ComboBoxItem Content="Windows App SDK AI OCR"
                                                   Tag="WindowsAppSdk" />
                                     <ComboBoxItem Content="Windows.Media.Ocr"

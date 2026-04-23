@@ -18,6 +18,9 @@
 
   <ItemGroup>
     <Content Include="tessdata\*.traineddata" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Transcope.Ocr\PaddleOcr\paddle_ocr_bridge.py"
+             Link="PaddleOcr\paddle_ocr_bridge.py"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
