@@ -10,683 +10,768 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 using WinBitmapDecoder = Windows.Graphics.Imaging.BitmapDecoder;
 
-namespace Transcope
+namespace Transcope;
+
+public partial class MainWindow : Window
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
-    public partial class MainWindow : Window
+    private readonly IOcrRecognizer ocrRecognizer = new OcrRecognizer();
+    private readonly IScreenCaptureService screenCaptureService = new ScreenCaptureService();
+    private readonly HttpClient translationHttpClient = new();
+    private readonly Dictionary<string, string> realtimeTranslationCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<TranslationOverlayWindow, OverlaySession> overlaySessions = new();
+    private readonly AppSettingsStore appSettingsStore = new();
+
+    private CancellationTokenSource? recognitionCancellation;
+    private CancellationTokenSource? translationCancellation;
+    private string? selectedImagePath;
+    private ScreenCaptureResult? selectedCapture;
+    private string lastRecognizedText = string.Empty;
+    private bool isRecognizing;
+    private bool isTranslating;
+    private bool isLoadingSettings;
+
+    public MainWindow()
     {
-        private readonly IOcrRecognizer ocrRecognizer = new OcrRecognizer();
-        private readonly IScreenCaptureService screenCaptureService = new ScreenCaptureService();
-        private readonly HttpClient translationHttpClient = new();
-        private readonly Dictionary<string, string> realtimeTranslationCache = new(StringComparer.Ordinal);
-        private CancellationTokenSource? recognitionCancellation;
-        private CancellationTokenSource? translationCancellation;
-        private CancellationTokenSource? realtimeCancellation;
-        private string? selectedImagePath;
-        private ScreenCaptureResult? selectedCapture;
-        private TranslationOverlayWindow? translationOverlay;
-        private string lastRecognizedText = string.Empty;
-        private bool isRecognizing;
-        private bool isTranslating;
-        private bool isRealtimeRunning;
+        InitializeComponent();
+        DeepSeekApiKeyBox.PasswordChanged += DeepSeekApiKeyBox_PasswordChanged;
+    }
 
-        public MainWindow()
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        EngineSelectionBox.SelectedIndex = 0;
+        PaddleRuntimeModeBox.SelectedIndex = 0;
+        TargetLanguageBox.SelectedIndex = 0;
+        LoadSavedSettings();
+        RefreshActionButtons();
+    }
+
+    private void DeepSeekApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (isLoadingSettings)
         {
-            InitializeComponent();
+            return;
         }
 
-        private void Window_Loaded(object sender, RoutedEventArgs e)
+        SaveCurrentApiKey();
+    }
+
+    private void LoadSavedSettings()
+    {
+        isLoadingSettings = true;
+
+        try
         {
-            EngineSelectionBox.SelectedIndex = 0;
-            TargetLanguageBox.SelectedIndex = 0;
-            RefreshActionButtons();
+            AppSettingsStore.AppSettings settings = appSettingsStore.Load();
+            DeepSeekApiKeyBox.Password = settings.DeepSeekApiKey ?? string.Empty;
+        }
+        finally
+        {
+            isLoadingSettings = false;
+        }
+    }
+
+    private void SaveCurrentApiKey()
+    {
+        appSettingsStore.SaveDeepSeekApiKey(
+            string.IsNullOrWhiteSpace(DeepSeekApiKeyBox.Password)
+                ? null
+                : DeepSeekApiKeyBox.Password.Trim());
+    }
+
+    private void PickImageButton_Click(object sender, RoutedEventArgs e)
+    {
+        OpenFileDialog dialog = new()
+        {
+            Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff|All files|*.*",
+            Title = "Select image for OCR"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
         }
 
-        private void PickImageButton_Click(object sender, RoutedEventArgs e)
+        DisposeSelectedCapture();
+        selectedImagePath = dialog.FileName;
+        ImagePathText.Text = selectedImagePath;
+        PreviewImage.Source = CreatePreviewImage(selectedImagePath);
+        EmptyPreviewText.Visibility = Visibility.Collapsed;
+        lastRecognizedText = string.Empty;
+        TranslationTextBox.Text = "Run OCR first, then translate.";
+        ResultTextBox.Text = "Click Start OCR.";
+        StatusText.Text = "Image loaded.";
+        EngineBadgeText.Text = "ENGINE: READY";
+        MetricsText.Text = "Lines: 0 / Words: 0";
+        RefreshActionButtons();
+    }
+
+    private async void CaptureScreenButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (isRecognizing || isTranslating)
         {
-            if (isRealtimeRunning)
-            {
-                StopRealtimeOverlay("实时覆盖已停止");
-            }
+            return;
+        }
 
-            OpenFileDialog dialog = new()
-            {
-                Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff|All files|*.*",
-                Title = "选择用于 OCR 的图片"
-            };
+        try
+        {
+            Hide();
+            await Task.Delay(150);
 
-            if (dialog.ShowDialog(this) != true)
+            ScreenCaptureResult? capture = await screenCaptureService.CaptureRegionAsync();
+            if (capture is null)
             {
+                StatusText.Text = HasSelectedInput ? StatusText.Text : "Screen capture canceled.";
                 return;
             }
 
-            DisposeSelectedCapture();
-            selectedImagePath = dialog.FileName;
-            ImagePathText.Text = selectedImagePath;
-            PreviewImage.Source = CreatePreviewImage(selectedImagePath);
-            EmptyPreviewText.Visibility = Visibility.Collapsed;
-            RunOcrButton.IsEnabled = true;
-            lastRecognizedText = string.Empty;
-            TranslateButton.IsEnabled = false;
-            TranslationTextBox.Text = "OCR 完成后可翻译结果。";
-            ResultTextBox.Text = "点击“开始 OCR”运行识别。";
-            StatusText.Text = "图片已载入";
-            EngineBadgeText.Text = "ENGINE: READY";
-            MetricsText.Text = "Lines: 0 · Words: 0";
-            RefreshActionButtons();
+            ApplySelectedCapture(capture);
+        }
+        catch (Exception ex)
+        {
+            ResultTextBox.Text = ex.Message;
+            StatusText.Text = "Screen capture failed.";
+            EngineBadgeText.Text = "ENGINE: ERROR";
+        }
+        finally
+        {
+            Show();
+            Activate();
+        }
+    }
+
+    private async void SelectRealtimeRegionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (isRecognizing || isTranslating)
+        {
+            return;
         }
 
-        private async void CaptureScreenButton_Click(object sender, RoutedEventArgs e)
+        _ = await SelectRealtimeRegionAsync();
+    }
+
+    private async void StartRealtimeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (isRecognizing || isTranslating)
         {
-            if (isRecognizing || isTranslating)
-            {
-                return;
-            }
-
-            try
-            {
-                Hide();
-                await Task.Delay(150);
-
-                ScreenCaptureResult? capture = await screenCaptureService.CaptureRegionAsync();
-                if (capture is null)
-                {
-                    StatusText.Text = HasSelectedInput ? StatusText.Text : "截图已取消";
-                    return;
-                }
-
-                ApplySelectedCapture(capture);
-            }
-            catch (Exception ex)
-            {
-                ResultTextBox.Text = ex.Message;
-                StatusText.Text = "截图失败";
-                EngineBadgeText.Text = "ENGINE: ERROR";
-            }
-            finally
-            {
-                Show();
-                Activate();
-            }
+            return;
         }
 
-        private async void SelectRealtimeRegionButton_Click(object sender, RoutedEventArgs e)
+        _ = await SelectRealtimeRegionAsync();
+    }
+
+    private async Task<bool> SelectRealtimeRegionAsync()
+    {
+        try
         {
-            if (isRecognizing || isTranslating || isRealtimeRunning)
+            Hide();
+            await Task.Delay(150);
+
+            ScreenCaptureResult? capture = await screenCaptureService.CaptureRegionAsync();
+            if (capture is null)
             {
-                return;
-            }
-
-            _ = await SelectRealtimeRegionAsync();
-        }
-
-        private async void StartRealtimeButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (isRealtimeRunning)
-            {
-                StopRealtimeOverlay("实时覆盖已停止");
-                return;
-            }
-
-            if (isRecognizing || isTranslating)
-            {
-                return;
-            }
-
-            if (selectedCapture is null)
-            {
-                bool selected = await SelectRealtimeRegionAsync();
-                if (!selected || selectedCapture is null)
-                {
-                    return;
-                }
-            }
-
-            StartRealtimeOverlay(selectedCapture.Bounds);
-        }
-
-        private async Task<bool> SelectRealtimeRegionAsync()
-        {
-            try
-            {
-                Hide();
-                await Task.Delay(150);
-
-                ScreenCaptureResult? capture = await screenCaptureService.CaptureRegionAsync();
-                if (capture is null)
-                {
-                    StatusText.Text = "实时区域选择已取消";
-                    return false;
-                }
-
-                ApplySelectedCapture(capture);
-                StatusText.Text = "实时区域已选择，点击“开始实时覆盖”";
-                return true;
-            }
-            catch (Exception ex)
-            {
-                ResultTextBox.Text = ex.Message;
-                StatusText.Text = "实时区域选择失败";
-                EngineBadgeText.Text = "ENGINE: ERROR";
+                StatusText.Text = "Overlay selection canceled.";
                 return false;
             }
-            finally
-            {
-                Show();
-                Activate();
-            }
+
+            ApplySelectedCapture(capture);
+            AddTranslationOverlay(capture.Bounds);
+            StatusText.Text = "Overlay created.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ResultTextBox.Text = ex.Message;
+            StatusText.Text = "Overlay selection failed.";
+            EngineBadgeText.Text = "ENGINE: ERROR";
+            return false;
+        }
+        finally
+        {
+            Show();
+            Activate();
+        }
+    }
+
+    private void AddTranslationOverlay(ScreenCaptureBounds bounds)
+    {
+        TranslationOverlayWindow overlay = new(bounds);
+        overlay.ContinueTranslationRequested += Overlay_ContinueTranslationRequested;
+        overlay.BoundsChanged += Overlay_BoundsChanged;
+        overlay.Closed += Overlay_Closed;
+        overlay.Show();
+
+        overlaySessions.Add(overlay, new OverlaySession(bounds, overlay));
+        StatusText.Text = $"Overlay added. Active overlays: {overlaySessions.Count}";
+        EngineBadgeText.Text = "ENGINE: MANUAL OVERLAY";
+        RefreshActionButtons();
+    }
+
+    private async void Overlay_ContinueTranslationRequested(object? sender, EventArgs e)
+    {
+        if (sender is not TranslationOverlayWindow overlay ||
+            !overlaySessions.TryGetValue(overlay, out OverlaySession? session) ||
+            isTranslating)
+        {
+            return;
         }
 
-        private void StartRealtimeOverlay(ScreenCaptureBounds bounds)
+        await RunOverlayTranslationOnceAsync(session);
+    }
+
+    private void Overlay_BoundsChanged(object? sender, OverlayBoundsChangedEventArgs e)
+    {
+        if (sender is TranslationOverlayWindow overlay &&
+            overlaySessions.TryGetValue(overlay, out OverlaySession? session))
         {
-            StopRealtimeOverlay(status: null);
-            realtimeTranslationCache.Clear();
-            translationOverlay = new TranslationOverlayWindow(bounds);
-            translationOverlay.ContinueTranslationRequested += Overlay_ContinueTranslationRequested;
-            translationOverlay.Show();
-            isRealtimeRunning = true;
-            StatusText.Text = "覆盖区域已就绪，点击左上角“继续翻译”";
-            EngineBadgeText.Text = "ENGINE: MANUAL OVERLAY";
-            RefreshActionButtons();
+            session.Bounds = e.Bounds;
+            StatusText.Text = $"Overlay updated: {e.Bounds.Width} x {e.Bounds.Height}";
+        }
+    }
+
+    private void Overlay_Closed(object? sender, EventArgs e)
+    {
+        if (sender is not TranslationOverlayWindow overlay ||
+            !overlaySessions.TryGetValue(overlay, out OverlaySession? session))
+        {
+            return;
         }
 
-        private async void Overlay_ContinueTranslationRequested(object? sender, EventArgs e)
+        session.Cancellation?.Cancel();
+        session.Cancellation?.Dispose();
+
+        overlay.ContinueTranslationRequested -= Overlay_ContinueTranslationRequested;
+        overlay.BoundsChanged -= Overlay_BoundsChanged;
+        overlay.Closed -= Overlay_Closed;
+        overlaySessions.Remove(overlay);
+
+        StatusText.Text = overlaySessions.Count == 0
+            ? "All overlays closed."
+            : $"Remaining overlays: {overlaySessions.Count}";
+        RefreshActionButtons();
+    }
+
+    private async Task RunOverlayTranslationOnceAsync(OverlaySession session)
+    {
+        session.Cancellation?.Cancel();
+        session.Cancellation?.Dispose();
+        session.Cancellation = new CancellationTokenSource();
+        CancellationTokenSource currentCancellation = session.Cancellation;
+        CancellationToken cancellationToken = currentCancellation.Token;
+
+        session.Overlay.SetTranslationRunning(true);
+        SetTranslationState(isRunning: true, "Translating overlay...");
+
+        try
         {
-            if (selectedCapture is null ||
-                translationOverlay is null ||
-                isTranslating)
+            await Dispatcher.InvokeAsync(session.Overlay.HideControls);
+
+            ScreenCaptureResult capture = await Task.Run(
+                () => screenCaptureService.Capture(session.Bounds),
+                cancellationToken);
+
+            using (capture)
             {
-                return;
-            }
-
-            await RunOverlayTranslationOnceAsync(
-                selectedCapture.Bounds,
-                translationOverlay);
-        }
-
-        private void StopRealtimeOverlay(string? status)
-        {
-            realtimeCancellation?.Cancel();
-            realtimeCancellation?.Dispose();
-            realtimeCancellation = null;
-
-            if (translationOverlay is not null)
-            {
-                translationOverlay.ContinueTranslationRequested -= Overlay_ContinueTranslationRequested;
-                translationOverlay.Close();
-            }
-
-            translationOverlay = null;
-            isRealtimeRunning = false;
-
-            if (!string.IsNullOrWhiteSpace(status))
-            {
-                StatusText.Text = status;
-            }
-
-            RefreshActionButtons();
-        }
-
-        private async Task RunOverlayTranslationOnceAsync(
-            ScreenCaptureBounds bounds,
-            TranslationOverlayWindow overlay)
-        {
-            realtimeCancellation?.Cancel();
-            realtimeCancellation?.Dispose();
-            realtimeCancellation = new CancellationTokenSource();
-            CancellationTokenSource currentCancellation = realtimeCancellation;
-            CancellationToken cancellationToken = currentCancellation.Token;
-
-            overlay.SetTranslationRunning(true);
-            SetTranslationState(isRunning: true, "正在翻译覆盖区域...");
-
-            try
-            {
-                ScreenCaptureResult capture = await Task.Run(
-                    () => screenCaptureService.Capture(bounds),
+                OcrRecognitionResult ocrResult = await RecognizeTextAsync(
+                    capture.SoftwareBitmap,
                     cancellationToken);
 
-                using (capture)
+                IReadOnlyList<TranslatedOverlayItem> overlayItems =
+                    await CreateTranslatedOverlayItemsAsync(ocrResult.Lines, cancellationToken);
+
+                int wordCount = ocrResult.Lines.Sum(static line => line.Words.Count);
+                await Dispatcher.InvokeAsync(() =>
                 {
-                    OcrRecognitionResult ocrResult = await RecognizeTextAsync(
-                        capture.SoftwareBitmap,
-                        cancellationToken);
-
-                    IReadOnlyList<TranslatedOverlayItem> overlayItems =
-                        await CreateTranslatedOverlayItemsAsync(ocrResult.Lines, cancellationToken);
-
-                    int wordCount = ocrResult.Lines.Sum(static line => line.Words.Count);
-                    await Dispatcher.InvokeAsync(() =>
+                    if (cancellationToken.IsCancellationRequested ||
+                        !overlaySessions.ContainsKey(session.Overlay))
                     {
-                        if (cancellationToken.IsCancellationRequested)
-                        {
-                            return;
-                        }
+                        return;
+                    }
 
-                        overlay.Render(overlayItems);
-                        ResultTextBox.Text = string.IsNullOrWhiteSpace(ocrResult.Text)
-                            ? "没有识别到文本。"
-                            : ocrResult.Text;
-                        TranslationTextBox.Text = string.Join(
-                            Environment.NewLine,
-                            overlayItems.Select(static item => item.Text));
-                        MetricsText.Text = $"Lines: {ocrResult.Lines.Count} · Words: {wordCount}";
-                        StatusText.Text = $"覆盖区域已翻译 · {DateTime.Now:HH:mm:ss}";
-                        EngineBadgeText.Text = $"ENGINE: {ocrResult.EngineKind}";
-                    });
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                StatusText.Text = "覆盖翻译已取消";
-            }
-            catch (Exception ex)
-            {
-                StatusText.Text = "覆盖翻译失败";
-                TranslationTextBox.Text = ex.Message;
-            }
-            finally
-            {
-                if (ReferenceEquals(realtimeCancellation, currentCancellation))
-                {
-                    realtimeCancellation.Dispose();
-                    realtimeCancellation = null;
-                }
-
-                if (ReferenceEquals(translationOverlay, overlay))
-                {
-                    overlay.SetTranslationRunning(false);
-                }
-
-                SetTranslationState(isRunning: false, StatusText.Text);
+                    session.Overlay.Render(overlayItems);
+                    ResultTextBox.Text = string.IsNullOrWhiteSpace(ocrResult.Text)
+                        ? "No text recognized."
+                        : ocrResult.Text;
+                    TranslationTextBox.Text = string.Join(
+                        Environment.NewLine,
+                        overlayItems.Select(static item => item.Text));
+                    MetricsText.Text = $"Lines: {ocrResult.Lines.Count} / Words: {wordCount}";
+                    StatusText.Text = $"Overlay translated at {DateTime.Now:HH:mm:ss}";
+                    EngineBadgeText.Text = CreateEngineBadgeText(ocrResult.EngineKind);
+                });
             }
         }
-
-        private async void RunOcrButton_Click(object sender, RoutedEventArgs e)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            if (!HasSelectedInput)
+            StatusText.Text = "Overlay translation canceled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Overlay translation failed.";
+            TranslationTextBox.Text = ex.Message;
+        }
+        finally
+        {
+            if (overlaySessions.ContainsKey(session.Overlay))
             {
-                StatusText.Text = "请先选择图片";
-                return;
+                await Dispatcher.InvokeAsync(session.Overlay.ShowControls);
             }
 
-            recognitionCancellation?.Dispose();
-            recognitionCancellation = new CancellationTokenSource();
-            lastRecognizedText = string.Empty;
-            TranslationTextBox.Text = "OCR 完成后可翻译结果。";
-
-            SetRecognitionState(isRunning: true, "识别中...");
-            SoftwareBitmap? loadedBitmap = null;
-
-            try
+            if (ReferenceEquals(session.Cancellation, currentCancellation))
             {
-                SoftwareBitmap bitmap;
-                if (selectedCapture is not null)
-                {
-                    bitmap = selectedCapture.SoftwareBitmap;
-                }
-                else
-                {
-                    loadedBitmap = await LoadSoftwareBitmapAsync(
-                        selectedImagePath!,
-                        recognitionCancellation.Token);
-                    bitmap = loadedBitmap;
-                }
+                session.Cancellation.Dispose();
+                session.Cancellation = null;
+            }
 
-                OcrRecognitionResult result = await RecognizeTextAsync(
-                    bitmap,
+            if (overlaySessions.ContainsKey(session.Overlay))
+            {
+                session.Overlay.SetTranslationRunning(false);
+            }
+
+            SetTranslationState(isRunning: false, StatusText.Text);
+        }
+    }
+
+    private void CloseAllOverlays(string? status)
+    {
+        foreach (OverlaySession session in overlaySessions.Values.ToArray())
+        {
+            session.Cancellation?.Cancel();
+            session.Cancellation?.Dispose();
+            session.Cancellation = null;
+
+            session.Overlay.ContinueTranslationRequested -= Overlay_ContinueTranslationRequested;
+            session.Overlay.BoundsChanged -= Overlay_BoundsChanged;
+            session.Overlay.Closed -= Overlay_Closed;
+            session.Overlay.Close();
+        }
+
+        overlaySessions.Clear();
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            StatusText.Text = status;
+        }
+
+        RefreshActionButtons();
+    }
+
+    private async void RunOcrButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!HasSelectedInput)
+        {
+            StatusText.Text = "Select an image or capture first.";
+            return;
+        }
+
+        recognitionCancellation?.Dispose();
+        recognitionCancellation = new CancellationTokenSource();
+        lastRecognizedText = string.Empty;
+        TranslationTextBox.Text = "Run OCR first, then translate.";
+
+        SetRecognitionState(isRunning: true, "Recognizing...");
+        SoftwareBitmap? loadedBitmap = null;
+
+        try
+        {
+            SoftwareBitmap bitmap;
+            if (selectedCapture is not null)
+            {
+                bitmap = selectedCapture.SoftwareBitmap;
+            }
+            else
+            {
+                loadedBitmap = await LoadSoftwareBitmapAsync(
+                    selectedImagePath!,
                     recognitionCancellation.Token);
+                bitmap = loadedBitmap;
+            }
 
-                ResultTextBox.Text = string.IsNullOrWhiteSpace(result.Text)
-                    ? "没有识别到文本。"
-                    : result.Text;
-                lastRecognizedText = result.Text;
-                TranslationTextBox.Text = string.IsNullOrWhiteSpace(lastRecognizedText)
-                    ? "没有可翻译的 OCR 文本。"
-                    : "点击“翻译”使用 DeepSeek Chat 翻译 OCR 结果。";
+            OcrRecognitionResult result = await RecognizeTextAsync(
+                bitmap,
+                recognitionCancellation.Token);
 
-                int wordCount = result.Lines.Sum(static line => line.Words.Count);
-                MetricsText.Text = $"Lines: {result.Lines.Count} · Words: {wordCount}";
-                EngineBadgeText.Text = $"ENGINE: {result.EngineKind}";
-                StatusText.Text = CreateResultStatus(result);
-            }
-            catch (OperationCanceledException)
-            {
-                StatusText.Text = "已取消";
-            }
-            catch (Exception ex)
-            {
-                ResultTextBox.Text = ex.Message;
-                lastRecognizedText = string.Empty;
-                StatusText.Text = "识别失败";
-                EngineBadgeText.Text = "ENGINE: ERROR";
-            }
-            finally
-            {
-                loadedBitmap?.Dispose();
-                SetRecognitionState(isRunning: false, HasSelectedInput ? StatusText.Text : "等待图片");
-            }
+            ResultTextBox.Text = string.IsNullOrWhiteSpace(result.Text)
+                ? "No text recognized."
+                : result.Text;
+            lastRecognizedText = result.Text;
+            TranslationTextBox.Text = string.IsNullOrWhiteSpace(lastRecognizedText)
+                ? "No OCR text available for translation."
+                : "Click Translate to translate the OCR result.";
+
+            int wordCount = result.Lines.Sum(static line => line.Words.Count);
+            MetricsText.Text = $"Lines: {result.Lines.Count} / Words: {wordCount}";
+            EngineBadgeText.Text = CreateEngineBadgeText(result.EngineKind);
+            StatusText.Text = CreateResultStatus(result);
         }
-
-        private void CancelButton_Click(object sender, RoutedEventArgs e)
+        catch (OperationCanceledException)
         {
-            recognitionCancellation?.Cancel();
-            translationCancellation?.Cancel();
-            if (isRealtimeRunning)
-            {
-                StopRealtimeOverlay("实时覆盖已停止");
-            }
+            StatusText.Text = "Canceled.";
         }
-
-        private async void TranslateButton_Click(object sender, RoutedEventArgs e)
+        catch (Exception ex)
         {
-            string sourceText = string.IsNullOrWhiteSpace(lastRecognizedText)
-                ? ResultTextBox.Text
-                : lastRecognizedText;
-
-            if (string.IsNullOrWhiteSpace(sourceText))
-            {
-                StatusText.Text = "没有可翻译的文本";
-                return;
-            }
-
-            translationCancellation?.Dispose();
-            translationCancellation = new CancellationTokenSource();
-
-            SetTranslationState(isRunning: true, "DeepSeek Chat 翻译中...");
-
-            try
-            {
-                ITextTranslator translator = CreateDeepSeekTranslator();
-                TranslationResult result = await translator.TranslateAsync(
-                    sourceText,
-                    new TranslationRequest
-                    {
-                        SourceLanguage = null,
-                        TargetLanguage = GetTargetLanguage()
-                    },
-                    translationCancellation.Token);
-
-                TranslationTextBox.Text = result.Text;
-                StatusText.Text = $"DeepSeek Chat translated with {result.Model}";
-            }
-            catch (OperationCanceledException)
-            {
-                StatusText.Text = "翻译已取消";
-            }
-            catch (Exception ex)
-            {
-                TranslationTextBox.Text = ex.Message;
-                StatusText.Text = "翻译失败";
-            }
-            finally
-            {
-                SetTranslationState(isRunning: false, StatusText.Text);
-            }
+            ResultTextBox.Text = ex.Message;
+            lastRecognizedText = string.Empty;
+            StatusText.Text = "Recognition failed.";
+            EngineBadgeText.Text = "ENGINE: ERROR";
         }
-
-        private async Task<IReadOnlyList<TranslatedOverlayItem>> CreateTranslatedOverlayItemsAsync(
-            IReadOnlyList<OcrRecognizedLine> lines,
-            CancellationToken cancellationToken)
+        finally
         {
-            OcrRecognizedLine[] visibleLines = lines
-                .Where(static line => line.Boundary is not null && !string.IsNullOrWhiteSpace(line.Text))
-                .Take(32)
-                .ToArray();
+            loadedBitmap?.Dispose();
+            SetRecognitionState(isRunning: false, HasSelectedInput ? StatusText.Text : "Waiting for input.");
+        }
+    }
 
-            string targetLanguage = GetTargetLanguage();
-            string[] missingTexts = visibleLines
-                .Select(static line => line.Text.Trim())
-                .Distinct(StringComparer.Ordinal)
-                .Where(text => !realtimeTranslationCache.ContainsKey(CreateRealtimeTranslationCacheKey(targetLanguage, text)))
-                .ToArray();
+    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        recognitionCancellation?.Cancel();
+        translationCancellation?.Cancel();
+        CloseAllOverlays("All overlays closed.");
+    }
 
-            if (missingTexts.Length > 0)
-            {
-                await PopulateRealtimeTranslationCacheAsync(missingTexts, targetLanguage, cancellationToken);
-            }
+    private async void TranslateButton_Click(object sender, RoutedEventArgs e)
+    {
+        string sourceText = string.IsNullOrWhiteSpace(lastRecognizedText)
+            ? ResultTextBox.Text
+            : lastRecognizedText;
 
-            return visibleLines
-                .Select(line =>
-                {
-                    string sourceText = line.Text.Trim();
-                    string cacheKey = CreateRealtimeTranslationCacheKey(targetLanguage, sourceText);
-                    string translatedText = realtimeTranslationCache.TryGetValue(cacheKey, out string? cachedText)
-                        ? cachedText
-                        : sourceText;
-
-                    OcrRectangle rectangle = line.Boundary!.AxisAlignedBoundingBox;
-                    return new TranslatedOverlayItem(
-                        translatedText,
-                        new Rect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
-                })
-                .ToArray();
+        if (string.IsNullOrWhiteSpace(sourceText))
+        {
+            StatusText.Text = "No text available for translation.";
+            return;
         }
 
-        private async Task PopulateRealtimeTranslationCacheAsync(
-            IReadOnlyList<string> texts,
-            string targetLanguage,
-            CancellationToken cancellationToken)
+        translationCancellation?.Dispose();
+        translationCancellation = new CancellationTokenSource();
+
+        SetTranslationState(isRunning: true, "Translating...");
+
+        try
         {
             ITextTranslator translator = CreateDeepSeekTranslator();
-            TranslationRequest request = new()
+            TranslationResult result = await translator.TranslateAsync(
+                sourceText,
+                new TranslationRequest
+                {
+                    SourceLanguage = null,
+                    TargetLanguage = GetTargetLanguage()
+                },
+                translationCancellation.Token);
+
+            TranslationTextBox.Text = result.Text;
+            StatusText.Text = $"Translated with {result.Model}";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "Translation canceled.";
+        }
+        catch (Exception ex)
+        {
+            TranslationTextBox.Text = ex.Message;
+            StatusText.Text = "Translation failed.";
+        }
+        finally
+        {
+            SetTranslationState(isRunning: false, StatusText.Text);
+        }
+    }
+
+    private async Task<IReadOnlyList<TranslatedOverlayItem>> CreateTranslatedOverlayItemsAsync(
+        IReadOnlyList<OcrRecognizedLine> lines,
+        CancellationToken cancellationToken)
+    {
+        OcrRecognizedLine[] visibleLines = lines
+            .Where(static line => line.Boundary is not null && !string.IsNullOrWhiteSpace(line.Text))
+            .Take(32)
+            .ToArray();
+
+        string targetLanguage = GetTargetLanguage();
+        string[] missingTexts = visibleLines
+            .Select(static line => line.Text.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Where(text => !realtimeTranslationCache.ContainsKey(CreateRealtimeTranslationCacheKey(targetLanguage, text)))
+            .ToArray();
+
+        if (missingTexts.Length > 0)
+        {
+            await PopulateRealtimeTranslationCacheAsync(missingTexts, targetLanguage, cancellationToken);
+        }
+
+        return visibleLines
+            .Select(line =>
             {
-                SourceLanguage = null,
-                TargetLanguage = targetLanguage
-            };
+                string sourceText = line.Text.Trim();
+                string cacheKey = CreateRealtimeTranslationCacheKey(targetLanguage, sourceText);
+                string translatedText = realtimeTranslationCache.TryGetValue(cacheKey, out string? cachedText)
+                    ? cachedText
+                    : sourceText;
 
-            if (texts.Count == 1)
-            {
-                TranslationResult singleResult = await translator.TranslateAsync(
-                    texts[0],
-                    request,
-                    cancellationToken);
+                OcrRectangle rectangle = line.Boundary!.AxisAlignedBoundingBox;
+                return new TranslatedOverlayItem(
+                    translatedText,
+                    new Rect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
+            })
+            .ToArray();
+    }
 
-                realtimeTranslationCache[CreateRealtimeTranslationCacheKey(targetLanguage, texts[0])] = singleResult.Text;
-                return;
-            }
+    private async Task PopulateRealtimeTranslationCacheAsync(
+        IReadOnlyList<string> texts,
+        string targetLanguage,
+        CancellationToken cancellationToken)
+    {
+        ITextTranslator translator = CreateDeepSeekTranslator();
+        TranslationRequest request = new()
+        {
+            SourceLanguage = null,
+            TargetLanguage = targetLanguage
+        };
 
-            TranslationResult batchResult = await translator.TranslateAsync(
-                string.Join(Environment.NewLine, texts),
+        if (texts.Count == 1)
+        {
+            TranslationResult singleResult = await translator.TranslateAsync(
+                texts[0],
                 request,
                 cancellationToken);
 
-            string[] translatedLines = SplitTranslatedLines(batchResult.Text);
-            if (translatedLines.Length == texts.Count)
-            {
-                for (int index = 0; index < texts.Count; index++)
-                {
-                    realtimeTranslationCache[CreateRealtimeTranslationCacheKey(targetLanguage, texts[index])] = translatedLines[index];
-                }
+            realtimeTranslationCache[CreateRealtimeTranslationCacheKey(targetLanguage, texts[0])] = singleResult.Text;
+            return;
+        }
 
-                return;
+        TranslationResult batchResult = await translator.TranslateAsync(
+            string.Join(Environment.NewLine, texts),
+            request,
+            cancellationToken);
+
+        string[] translatedLines = SplitTranslatedLines(batchResult.Text);
+        if (translatedLines.Length == texts.Count)
+        {
+            for (int index = 0; index < texts.Count; index++)
+            {
+                realtimeTranslationCache[CreateRealtimeTranslationCacheKey(targetLanguage, texts[index])] =
+                    translatedLines[index];
             }
 
-            foreach (string text in texts)
-            {
-                TranslationResult lineResult = await translator.TranslateAsync(
-                    text,
-                    request,
-                    cancellationToken);
-
-                realtimeTranslationCache[CreateRealtimeTranslationCacheKey(targetLanguage, text)] = lineResult.Text;
-            }
+            return;
         }
 
-        private static string CreateRealtimeTranslationCacheKey(string targetLanguage, string text)
+        foreach (string text in texts)
         {
-            return $"{targetLanguage}\u001F{text}";
+            TranslationResult lineResult = await translator.TranslateAsync(
+                text,
+                request,
+                cancellationToken);
+
+            realtimeTranslationCache[CreateRealtimeTranslationCacheKey(targetLanguage, text)] = lineResult.Text;
         }
+    }
 
-        private static string[] SplitTranslatedLines(string text)
+    private static string CreateRealtimeTranslationCacheKey(string targetLanguage, string text)
+    {
+        return $"{targetLanguage}\u001F{text}";
+    }
+
+    private static string[] SplitTranslatedLines(string text)
+    {
+        return text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private ValueTask<OcrRecognitionResult> RecognizeTextAsync(
+        SoftwareBitmap bitmap,
+        CancellationToken cancellationToken)
+    {
+        OcrRecognitionOptions options = new()
         {
-            return text
-                .Replace("\r\n", "\n", StringComparison.Ordinal)
-                .Replace('\r', '\n')
-                .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        }
-
-        private ValueTask<OcrRecognitionResult> RecognizeTextAsync(
-            SoftwareBitmap bitmap,
-            CancellationToken cancellationToken)
-        {
-            OcrRecognitionOptions options = new()
-            {
-                EngineSelection = GetSelectedEngine(),
-                LanguageTag = string.IsNullOrWhiteSpace(LanguageTextBox.Text)
-                    ? null
-                    : LanguageTextBox.Text.Trim()
-            };
-
-            return ocrRecognizer.RecognizeAsync(bitmap, options, cancellationToken);
-        }
-
-        private ITextTranslator CreateDeepSeekTranslator()
-        {
-            string? apiKey = string.IsNullOrWhiteSpace(DeepSeekApiKeyBox.Password)
+            EngineSelection = GetSelectedEngine(),
+            PaddleRuntimeMode = GetSelectedPaddleRuntimeMode(),
+            LanguageTag = string.IsNullOrWhiteSpace(LanguageTextBox.Text)
                 ? null
-                : DeepSeekApiKeyBox.Password.Trim();
+                : LanguageTextBox.Text.Trim()
+        };
 
-            return new DeepSeekChatTranslator(
-                translationHttpClient,
-                new DeepSeekChatTranslatorOptions
-                {
-                    ApiKey = apiKey
-                });
-        }
+        return ocrRecognizer.RecognizeAsync(bitmap, options, cancellationToken);
+    }
 
-        private string GetTargetLanguage()
-        {
-            if (TargetLanguageBox.SelectedItem is ComboBoxItem item &&
-                item.Tag is string tag &&
-                !string.IsNullOrWhiteSpace(tag))
+    private ITextTranslator CreateDeepSeekTranslator()
+    {
+        string? apiKey = string.IsNullOrWhiteSpace(DeepSeekApiKeyBox.Password)
+            ? null
+            : DeepSeekApiKeyBox.Password.Trim();
+
+        return new DeepSeekChatTranslator(
+            translationHttpClient,
+            new DeepSeekChatTranslatorOptions
             {
-                return tag.Trim();
-            }
+                ApiKey = apiKey
+            });
+    }
 
-            return TranslationRequest.Default.TargetLanguage;
-        }
-
-        private static BitmapImage CreatePreviewImage(string imagePath)
+    private string GetTargetLanguage()
+    {
+        if (TargetLanguageBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string tag &&
+            !string.IsNullOrWhiteSpace(tag))
         {
-            BitmapImage image = new();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.UriSource = new Uri(imagePath);
-            image.EndInit();
-            image.Freeze();
-
-            return image;
+            return tag.Trim();
         }
 
-        private void ApplySelectedCapture(ScreenCaptureResult capture)
+        return TranslationRequest.Default.TargetLanguage;
+    }
+
+    private static BitmapImage CreatePreviewImage(string imagePath)
+    {
+        BitmapImage image = new();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.UriSource = new Uri(imagePath);
+        image.EndInit();
+        image.Freeze();
+
+        return image;
+    }
+
+    private void ApplySelectedCapture(ScreenCaptureResult capture)
+    {
+        DisposeSelectedCapture();
+        selectedCapture = capture;
+        selectedImagePath = null;
+        ImagePathText.Text = $"Capture {capture.Width} x {capture.Height}";
+        PreviewImage.Source = capture.Preview;
+        EmptyPreviewText.Visibility = Visibility.Collapsed;
+        lastRecognizedText = string.Empty;
+        TranslationTextBox.Text = "Run OCR first, then translate.";
+        ResultTextBox.Text = "Click Start OCR.";
+        StatusText.Text = "Capture loaded.";
+        EngineBadgeText.Text = "ENGINE: READY";
+        MetricsText.Text = "Lines: 0 / Words: 0";
+        RefreshActionButtons();
+    }
+
+    private void DisposeSelectedCapture()
+    {
+        selectedCapture?.Dispose();
+        selectedCapture = null;
+    }
+
+    private static async Task<SoftwareBitmap> LoadSoftwareBitmapAsync(
+        string imagePath,
+        CancellationToken cancellationToken)
+    {
+        StorageFile file = await StorageFile.GetFileFromPathAsync(imagePath)
+            .AsTask(cancellationToken);
+
+        using Windows.Storage.Streams.IRandomAccessStream stream = await file
+            .OpenAsync(FileAccessMode.Read)
+            .AsTask(cancellationToken);
+
+        WinBitmapDecoder decoder = await WinBitmapDecoder.CreateAsync(stream)
+            .AsTask(cancellationToken);
+
+        return await decoder.GetSoftwareBitmapAsync()
+            .AsTask(cancellationToken);
+    }
+
+    private OcrEngineSelection GetSelectedEngine()
+    {
+        if (EngineSelectionBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string tag &&
+            Enum.TryParse(tag, out OcrEngineSelection selection))
         {
-            DisposeSelectedCapture();
-            selectedCapture = capture;
-            selectedImagePath = null;
-            ImagePathText.Text = $"截图 {capture.Width} x {capture.Height}";
-            PreviewImage.Source = capture.Preview;
-            EmptyPreviewText.Visibility = Visibility.Collapsed;
-            RunOcrButton.IsEnabled = true;
-            lastRecognizedText = string.Empty;
-            TranslateButton.IsEnabled = false;
-            TranslationTextBox.Text = "OCR 完成后可翻译结果。";
-            ResultTextBox.Text = "点击“开始 OCR”运行识别。";
-            StatusText.Text = "截图已载入";
-            EngineBadgeText.Text = "ENGINE: READY";
-            MetricsText.Text = "Lines: 0 · Words: 0";
-            RefreshActionButtons();
+            return selection;
         }
 
-        private void DisposeSelectedCapture()
+        return OcrEngineSelection.Auto;
+    }
+
+    private PaddleRuntimeMode GetSelectedPaddleRuntimeMode()
+    {
+        if (PaddleRuntimeModeBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string tag &&
+            Enum.TryParse(tag, out PaddleRuntimeMode runtimeMode))
         {
-            selectedCapture?.Dispose();
-            selectedCapture = null;
+            return runtimeMode;
         }
 
-        private static async Task<SoftwareBitmap> LoadSoftwareBitmapAsync(
-            string imagePath,
-            CancellationToken cancellationToken)
+        return PaddleRuntimeMode.Cpu;
+    }
+
+    private string CreateEngineBadgeText(OcrEngineKind engineKind)
+    {
+        if (engineKind == OcrEngineKind.PaddleOcr)
         {
-            StorageFile file = await StorageFile.GetFileFromPathAsync(imagePath)
-                .AsTask(cancellationToken);
-
-            using Windows.Storage.Streams.IRandomAccessStream stream = await file
-                .OpenAsync(FileAccessMode.Read)
-                .AsTask(cancellationToken);
-
-            WinBitmapDecoder decoder = await WinBitmapDecoder.CreateAsync(stream)
-                .AsTask(cancellationToken);
-
-            return await decoder.GetSoftwareBitmapAsync()
-                .AsTask(cancellationToken);
+            return $"ENGINE: PaddleOcr ({GetSelectedPaddleRuntimeMode().ToString().ToUpperInvariant()})";
         }
 
-        private OcrEngineSelection GetSelectedEngine()
+        return $"ENGINE: {engineKind}";
+    }
+
+    private static string CreateResultStatus(OcrRecognitionResult result)
+    {
+        string language = result.LanguageTag is null
+            ? "Auto language"
+            : $"Language: {result.LanguageTag}";
+
+        string angle = result.TextAngle is null
+            ? "Angle: n/a"
+            : $"Angle: {result.TextAngle:0.##}";
+
+        return $"{language} / {angle}";
+    }
+
+    private void SetRecognitionState(bool isRunning, string status)
+    {
+        isRecognizing = isRunning;
+        StatusText.Text = status;
+        RefreshActionButtons();
+    }
+
+    private void SetTranslationState(bool isRunning, string status)
+    {
+        isTranslating = isRunning;
+        StatusText.Text = status;
+        RefreshActionButtons();
+    }
+
+    private bool HasSelectedInput => selectedImagePath is not null || selectedCapture is not null;
+
+    private bool HasOverlayWindows => overlaySessions.Count > 0;
+
+    private void RefreshActionButtons()
+    {
+        bool isBusy = isRecognizing || isTranslating;
+        CaptureScreenButton.IsEnabled = !isBusy;
+        SelectRealtimeRegionButton.IsEnabled = !isBusy;
+        RunOcrButton.IsEnabled = !isBusy && HasSelectedInput;
+        TranslateButton.IsEnabled = !isBusy && !string.IsNullOrWhiteSpace(lastRecognizedText);
+        StartRealtimeButton.IsEnabled = !isBusy;
+        StartRealtimeButton.Content = "New Overlay";
+        CancelButton.IsEnabled = isBusy || HasOverlayWindows;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        SaveCurrentApiKey();
+        recognitionCancellation?.Dispose();
+        translationCancellation?.Dispose();
+        CloseAllOverlays(status: null);
+        DisposeSelectedCapture();
+        translationHttpClient.Dispose();
+        base.OnClosed(e);
+    }
+
+    private sealed class OverlaySession
+    {
+        public OverlaySession(ScreenCaptureBounds bounds, TranslationOverlayWindow overlay)
         {
-            if (EngineSelectionBox.SelectedItem is ComboBoxItem item &&
-                item.Tag is string tag &&
-                Enum.TryParse(tag, out OcrEngineSelection selection))
-            {
-                return selection;
-            }
-
-            return OcrEngineSelection.Auto;
+            Bounds = bounds;
+            Overlay = overlay;
         }
 
-        private static string CreateResultStatus(OcrRecognitionResult result)
-        {
-            string language = result.LanguageTag is null
-                ? "Auto language"
-                : $"Language: {result.LanguageTag}";
+        public ScreenCaptureBounds Bounds { get; set; }
 
-            string angle = result.TextAngle is null
-                ? "Angle: n/a"
-                : $"Angle: {result.TextAngle:0.##}";
+        public TranslationOverlayWindow Overlay { get; }
 
-            return $"{language} · {angle}";
-        }
-
-        private void SetRecognitionState(bool isRunning, string status)
-        {
-            isRecognizing = isRunning;
-            StatusText.Text = status;
-            RefreshActionButtons();
-        }
-
-        private void SetTranslationState(bool isRunning, string status)
-        {
-            isTranslating = isRunning;
-            StatusText.Text = status;
-            RefreshActionButtons();
-        }
-
-        private bool HasSelectedInput => selectedImagePath is not null || selectedCapture is not null;
-
-        private void RefreshActionButtons()
-        {
-            bool isBusy = isRecognizing || isTranslating;
-            CaptureScreenButton.IsEnabled = !isBusy && !isRealtimeRunning;
-            SelectRealtimeRegionButton.IsEnabled = !isBusy && !isRealtimeRunning;
-            RunOcrButton.IsEnabled = !isBusy && !isRealtimeRunning && HasSelectedInput;
-            TranslateButton.IsEnabled = !isBusy && !isRealtimeRunning && !string.IsNullOrWhiteSpace(lastRecognizedText);
-            StartRealtimeButton.IsEnabled = !isBusy || isRealtimeRunning;
-            StartRealtimeButton.Content = isRealtimeRunning ? "关闭翻译框" : "显示翻译框";
-            CancelButton.IsEnabled = isBusy || isRealtimeRunning;
-        }
-
-        protected override void OnClosed(EventArgs e)
-        {
-            realtimeCancellation?.Cancel();
-            recognitionCancellation?.Dispose();
-            translationCancellation?.Dispose();
-            realtimeCancellation?.Dispose();
-            translationOverlay?.Close();
-            DisposeSelectedCapture();
-            translationHttpClient.Dispose();
-            base.OnClosed(e);
-        }
+        public CancellationTokenSource? Cancellation { get; set; }
     }
 }

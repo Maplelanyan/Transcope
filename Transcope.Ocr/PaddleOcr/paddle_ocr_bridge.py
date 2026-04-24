@@ -11,24 +11,56 @@ os.environ.setdefault("FLAGS_use_mkldnn", "0")
 os.environ.setdefault("FLAGS_enable_pir_api", "0")
 
 
-def build_ocr(language):
+def normalize_device(device):
+    if not device:
+        return "cpu"
+
+    lowered = str(device).strip().lower()
+    if lowered == "gpu":
+        return "gpu:0"
+
+    return lowered
+
+
+def ensure_runtime_support(device):
+    import paddle
+
+    if device.startswith("gpu"):
+        if not paddle.device.is_compiled_with_cuda():
+            raise RuntimeError(
+                "GPU mode requires a CUDA-enabled PaddlePaddle build. "
+                "Install a GPU wheel and use a Python environment that has it."
+            )
+
+        paddle.device.set_device(device)
+        return
+
+    paddle.device.set_device("cpu")
+
+
+def build_ocr(language, device):
     from paddleocr import PaddleOCR
+
+    normalized_device = normalize_device(device)
+    ensure_runtime_support(normalized_device)
 
     constructor_attempts = [
         {
             "lang": language,
+            "device": normalized_device,
             "use_doc_orientation_classify": False,
             "use_doc_unwarping": False,
             "use_textline_orientation": False,
         },
         {
             "lang": language,
+            "device": normalized_device,
             "use_doc_orientation_classify": False,
             "use_doc_unwarping": False,
             "use_angle_cls": False,
         },
-        {"lang": language, "use_angle_cls": True},
-        {"lang": language},
+        {"lang": language, "device": normalized_device, "use_angle_cls": True},
+        {"lang": language, "device": normalized_device},
     ]
 
     last_error = None
@@ -234,11 +266,57 @@ def main():
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--image")
     parser.add_argument("--lang", default="ch")
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--server", action="store_true")
     args = parser.parse_args()
 
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            ocr = build_ocr(args.lang)
+            ocr = build_ocr(args.lang, args.device)
+
+        if args.server:
+            print(json.dumps({"ok": True, "ready": True}, ensure_ascii=False), flush=True)
+
+            for line in sys.stdin:
+                payload = line.strip()
+                if not payload:
+                    continue
+
+                try:
+                    request = json.loads(payload)
+                    command = request.get("command")
+
+                    if command == "exit":
+                        print(json.dumps({"ok": True, "bye": True}, ensure_ascii=False), flush=True)
+                        return 0
+
+                    if command != "recognize":
+                        raise ValueError(f"Unsupported command: {command}")
+
+                    image_path = request.get("image")
+                    if not image_path:
+                        raise ValueError("Missing image path.")
+
+                    with contextlib.redirect_stdout(sys.stderr):
+                        raw_results = run_prediction(ocr, image_path)
+
+                    print(
+                        json.dumps(
+                            {"ok": True, "items": normalize_results(raw_results)},
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+                except Exception as error:
+                    print(
+                        json.dumps(
+                            {"ok": False, "items": [], "error": str(error)},
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+            return 0
+
         if args.check:
             print(json.dumps({"ok": True, "items": []}, ensure_ascii=False))
             return 0

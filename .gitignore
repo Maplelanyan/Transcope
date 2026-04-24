@@ -365,3 +365,5 @@ FodyWeavers.xsd
 # Local Python environments for OCR sidecars
 .venv-paddleocr/
 Transcope/.venv-paddleocr/
+.venv-paddleocr-gpu/
+Transcope/.venv-paddleocr-gpu/

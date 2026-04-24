@@ -4,369 +4,539 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Transcope OCR"
-        Width="1180"
-        Height="760"
-        MinWidth="980"
-        MinHeight="640"
-        Background="#0D1110"
-        FontFamily="Bahnschrift"
-        Loaded="Window_Loaded">
+        Title="Transcope"
+        Width="1320"
+        Height="860"
+        MinWidth="1080"
+        MinHeight="700"
+        Background="#0E1014"
+        FontFamily="Segoe UI"
+        Loaded="Window_Loaded"
+        WindowStartupLocation="CenterScreen">
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBrush" Color="#F7F1E6" />
-        <SolidColorBrush x:Key="InkBrush" Color="#121916" />
-        <SolidColorBrush x:Key="MutedBrush" Color="#667069" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#F26430" />
-        <SolidColorBrush x:Key="AccentDarkBrush" Color="#A63818" />
-        <SolidColorBrush x:Key="LineBrush" Color="#D9CFBD" />
+        <SolidColorBrush x:Key="WindowBrush" Color="#0E1014" />
+        <SolidColorBrush x:Key="ShellBrush" Color="#141821" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#1A1F2B" />
+        <SolidColorBrush x:Key="PanelAltBrush" Color="#202636" />
+        <SolidColorBrush x:Key="InputBrush" Color="#111621" />
+        <SolidColorBrush x:Key="StrokeBrush" Color="#2B3447" />
+        <SolidColorBrush x:Key="StrokeStrongBrush" Color="#3B4760" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F7FB" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#95A0B5" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#58A6FF" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#7BB8FF" />
+        <SolidColorBrush x:Key="AccentPressedBrush" Color="#3B8CE9" />
+        <SolidColorBrush x:Key="SuccessBrush" Color="#2FA36B" />
+        <SolidColorBrush x:Key="WarningBrush" Color="#D79B3D" />
 
-        <Style TargetType="Button">
-            <Setter Property="Foreground" Value="#121916" />
-            <Setter Property="Background" Value="#F7C95F" />
-            <Setter Property="BorderBrush" Value="#121916" />
-            <Setter Property="BorderThickness" Value="2" />
-            <Setter Property="Padding" Value="18,10" />
-            <Setter Property="FontSize" Value="15" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Cursor" Value="Hand" />
+        <CornerRadius x:Key="PanelRadius">8</CornerRadius>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         </Style>
 
-        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="#F7F1E6" />
-            <Setter Property="Foreground" Value="#121916" />
+        <Style x:Key="SectionLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="16,10" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentPressedBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentPressedBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="#232A3B" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeStrongBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#2A3348" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#4A5A7B" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#1D2432" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#3D4A67" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="ComboBox">
-            <Setter Property="MinHeight" Value="38" />
-            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource InputBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeStrongBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,8" />
             <Setter Property="FontSize" Value="14" />
+            <Setter Property="MinHeight" Value="40" />
+        </Style>
+
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource PanelBrush}" />
         </Style>
 
         <Style TargetType="TextBox">
-            <Setter Property="MinHeight" Value="38" />
-            <Setter Property="Padding" Value="10,8" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="BorderBrush" Value="#CDBFAD" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource InputBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeStrongBrush}" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,9" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="MinHeight" Value="40" />
+        </Style>
+
+        <Style TargetType="PasswordBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource InputBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeStrongBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,9" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="MinHeight" Value="40" />
+        </Style>
+
+        <Style x:Key="OutputTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Background" Value="#121722" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="FontFamily" Value="Cascadia Code" />
+            <Setter Property="FontSize" Value="14" />
         </Style>
     </Window.Resources>
 
-    <Grid>
-        <Grid.Background>
-            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#0E1714" Offset="0" />
-                <GradientStop Color="#19322D" Offset="0.45" />
-                <GradientStop Color="#E56B36" Offset="1" />
-            </LinearGradientBrush>
-        </Grid.Background>
+    <Grid Background="{StaticResource WindowBrush}">
+        <Border Margin="18"
+                Background="{StaticResource ShellBrush}"
+                BorderBrush="#20283A"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="22">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="16" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-        <Grid Margin="28">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-            <DockPanel Margin="0,0,0,22">
-                <StackPanel DockPanel.Dock="Left">
-                    <TextBlock Text="Transcope OCR"
-                               Foreground="#FFF8E9"
-                               FontSize="42"
-                               FontWeight="Bold" />
-                    <TextBlock Text="Windows App SDK AI OCR 优先，失败回退 Windows.Media.Ocr / Tesseract"
-                               Foreground="#D6E2DB"
-                               FontSize="15"
-                               Margin="2,4,0,0" />
-                </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Transcope"
+                                   FontSize="28"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="实时 OCR / 翻译覆盖"
+                                   Margin="0,6,0,0"
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   FontSize="14" />
+                    </StackPanel>
 
-                <Border DockPanel.Dock="Right"
-                        Background="#FFF8E9"
-                        BorderBrush="#121916"
-                        BorderThickness="2"
-                        Padding="14,8"
-                        VerticalAlignment="Center">
-                    <TextBlock x:Name="EngineBadgeText"
-                               Text="ENGINE: IDLE"
-                               Foreground="#121916"
-                               FontFamily="Cascadia Mono"
-                               FontSize="13"
-                               FontWeight="SemiBold" />
-                </Border>
-            </DockPanel>
-
-            <Grid Grid.Row="1">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="1.04*" />
-                    <ColumnDefinition Width="22" />
-                    <ColumnDefinition Width="0.96*" />
-                </Grid.ColumnDefinitions>
-
-                <Border Grid.Column="0"
-                        Background="{StaticResource PanelBrush}"
-                        BorderBrush="#121916"
-                        BorderThickness="3"
-                        Padding="20">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="输入图像"
-                                           Foreground="{StaticResource InkBrush}"
-                                           FontSize="24"
-                                           FontWeight="Bold" />
-                                <TextBlock x:Name="ImagePathText"
-                                           Text="选择 PNG / JPG / BMP / TIFF 图片进行识别"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           TextTrimming="CharacterEllipsis"
-                                           Margin="0,4,20,0" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1"
-                                        Orientation="Horizontal">
-                                <Button x:Name="CaptureScreenButton"
-                                        Content="截图"
-                                        Click="CaptureScreenButton_Click"
-                                        Margin="0,0,10,0" />
-                                <Button x:Name="SelectRealtimeRegionButton"
-                                        Content="选择实时区域"
-                                        Style="{StaticResource SecondaryButton}"
-                                        Click="SelectRealtimeRegionButton_Click"
-                                        Margin="0,0,10,0" />
-                                <Button x:Name="StartRealtimeButton"
-                                        Content="显示翻译框"
-                                        Click="StartRealtimeButton_Click"
-                                        IsEnabled="False"
-                                        Margin="0,0,10,0" />
-                                <Button Content="选择图片"
-                                        Click="PickImageButton_Click" />
-                            </StackPanel>
-                        </Grid>
-
-                        <Border Grid.Row="1"
-                                Margin="0,18"
-                                Background="#151A17"
-                                BorderBrush="#121916"
-                                BorderThickness="2"
-                                ClipToBounds="True">
-                            <Grid>
-                                <Image x:Name="PreviewImage"
-                                       Stretch="Uniform" />
-                                <TextBlock x:Name="EmptyPreviewText"
-                                           Text="图片预览区"
-                                           Foreground="#8E9B92"
-                                           FontSize="28"
-                                           FontWeight="Bold"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Grid>
-                        </Border>
-
-                        <Grid Grid.Row="2">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.1*" />
-                                <ColumnDefinition Width="14" />
-                                <ColumnDefinition Width="0.9*" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel>
-                                <TextBlock Text="引擎策略"
-                                           Foreground="{StaticResource InkBrush}"
-                                           FontWeight="SemiBold"
-                                           Margin="0,0,0,6" />
-                                <ComboBox x:Name="EngineSelectionBox"
-                                          SelectedIndex="0">
-                                    <ComboBoxItem Content="Auto - PaddleOCR 优先，AI / Legacy / Tesseract 回退"
-                                                  Tag="Auto" />
-                                    <ComboBoxItem Content="PaddleOCR"
-                                                  Tag="PaddleOcr" />
-                                    <ComboBoxItem Content="Windows App SDK AI OCR"
-                                                  Tag="WindowsAppSdk" />
-                                    <ComboBoxItem Content="Windows.Media.Ocr"
-                                                  Tag="WindowsMedia" />
-                                    <ComboBoxItem Content="Tesseract OCR"
-                                                  Tag="Tesseract" />
-                                </ComboBox>
-                            </StackPanel>
-
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="语言（Legacy / Tesseract 可用）"
-                                           Foreground="{StaticResource InkBrush}"
-                                           FontWeight="SemiBold"
-                                           Margin="0,0,0,6" />
-                                <TextBox x:Name="LanguageTextBox"
-                                         Text="zh-Hans"
-                                         ToolTip="BCP-47，例如 zh-Hans、en-US；Tesseract 也可填 chi_sim、eng 等 traineddata code。AI OCR 当前自动检测。" />
-                            </StackPanel>
-                        </Grid>
-                    </Grid>
-                </Border>
-
-                <Border Grid.Column="2"
-                        Background="#FFF8E9"
-                        BorderBrush="#121916"
-                        BorderThickness="3"
-                        Padding="20">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="1.05*" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="0.85*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Left">
-                                <TextBlock Text="识别结果"
-                                           Foreground="{StaticResource InkBrush}"
-                                           FontSize="24"
-                                           FontWeight="Bold" />
-                                <TextBlock x:Name="StatusText"
-                                           Text="等待图片"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           Margin="0,4,0,0" />
-                            </StackPanel>
-
-                            <StackPanel DockPanel.Dock="Right"
-                                        Orientation="Horizontal"
-                                        HorizontalAlignment="Right">
-                                <Button x:Name="CancelButton"
-                                        Content="取消"
-                                        Style="{StaticResource SecondaryButton}"
-                                        Click="CancelButton_Click"
-                                        IsEnabled="False"
-                                        Margin="0,0,10,0" />
-                                <Button x:Name="RunOcrButton"
-                                        Content="开始 OCR"
-                                        Click="RunOcrButton_Click"
-                                        IsEnabled="False" />
-                                <Button x:Name="TranslateButton"
-                                        Content="翻译"
-                                        Click="TranslateButton_Click"
-                                        IsEnabled="False"
-                                        Margin="10,0,0,0" />
-                            </StackPanel>
-                        </DockPanel>
-
-                        <Border Grid.Row="1"
-                                Margin="0,18"
-                                Background="#FDF7EB"
-                                BorderBrush="{StaticResource LineBrush}"
-                                BorderThickness="2">
-                            <TextBox x:Name="ResultTextBox"
-                                     AcceptsReturn="True"
-                                     IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     FontFamily="Cascadia Mono"
-                                     FontSize="15"
-                                     MinHeight="0"
-                                     Text="OCR 结果会显示在这里。" />
-                        </Border>
-
-                        <Grid Grid.Row="2"
-                              Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="0.8*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="1.2*" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel>
-                                <TextBlock Text="目标语言"
-                                           Foreground="{StaticResource InkBrush}"
-                                           FontWeight="SemiBold"
-                                           Margin="0,0,0,6" />
-                                <ComboBox x:Name="TargetLanguageBox"
-                                          ToolTip="选择 DeepSeek Chat 翻译输出语言">
-                                    <ComboBoxItem Content="简体中文"
-                                                  Tag="zh-Hans" />
-                                    <ComboBoxItem Content="English"
-                                                  Tag="en" />
-                                    <ComboBoxItem Content="日本語"
-                                                  Tag="ja" />
-                                    <ComboBoxItem Content="한국어"
-                                                  Tag="ko" />
-                                    <ComboBoxItem Content="繁體中文"
-                                                  Tag="zh-Hant" />
-                                    <ComboBoxItem Content="Français"
-                                                  Tag="fr" />
-                                    <ComboBoxItem Content="Deutsch"
-                                                  Tag="de" />
-                                    <ComboBoxItem Content="Español"
-                                                  Tag="es" />
-                                </ComboBox>
-                            </StackPanel>
-
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="DeepSeek API Key"
-                                           Foreground="{StaticResource InkBrush}"
-                                           FontWeight="SemiBold"
-                                           Margin="0,0,0,6" />
-                                <PasswordBox x:Name="DeepSeekApiKeyBox"
-                                             MinHeight="38"
-                                             Padding="10,8"
-                                             FontSize="14"
-                                             BorderBrush="#CDBFAD"
-                                             BorderThickness="1"
-                                             ToolTip="留空时读取 DEEPSEEK_API_KEY 环境变量" />
-                            </StackPanel>
-
-                        </Grid>
-
-                        <Border Grid.Row="3"
-                                Margin="0,0,0,12"
-                                Background="#FDF7EB"
-                                BorderBrush="{StaticResource LineBrush}"
-                                BorderThickness="2">
-                            <TextBox x:Name="TranslationTextBox"
-                                     AcceptsReturn="True"
-                                     IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     FontFamily="Cascadia Mono"
-                                     FontSize="15"
-                                     MinHeight="0"
-                                     Text="翻译结果会显示在这里。" />
-                        </Border>
-
-                        <Grid Grid.Row="4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Border Background="#162033"
+                                BorderBrush="#2A3C5D"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,8"
+                                Margin="0,0,10,0">
                             <TextBlock x:Name="MetricsText"
-                                       Text="Lines: 0 · Words: 0"
-                                       Foreground="{StaticResource MutedBrush}"
-                                       FontFamily="Cascadia Mono"
-                                       VerticalAlignment="Center" />
+                                       Text="Lines: 0 / Words: 0"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       FontFamily="Cascadia Code"
+                                       FontSize="12" />
+                        </Border>
 
-                            <Border Grid.Column="1"
-                                    Background="{StaticResource AccentBrush}"
-                                    BorderBrush="{StaticResource AccentDarkBrush}"
-                                    BorderThickness="2"
-                                    Padding="12,6">
-                                <TextBlock Text="DEMO MODE"
-                                           Foreground="#FFF8E9"
-                                           FontFamily="Cascadia Mono"
-                                           FontWeight="Bold" />
+                        <Border Background="#17263E"
+                                BorderBrush="#2E4D7E"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,8">
+                            <TextBlock x:Name="EngineBadgeText"
+                                       Text="ENGINE: IDLE"
+                                       FontFamily="Cascadia Code"
+                                       FontSize="12"
+                                       FontWeight="SemiBold" />
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.04*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="0.96*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0"
+                            Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource StrokeBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="20">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="14" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="18" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel>
+                                    <TextBlock Text="输入"
+                                               FontSize="20"
+                                               FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ImagePathText"
+                                               Text="未选择图片或截图区域"
+                                               Margin="0,6,0,0"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+
+                                <WrapPanel Grid.Column="1"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Top"
+                                           ItemHeight="40"
+                                           Orientation="Horizontal">
+                                    <Button x:Name="CaptureScreenButton"
+                                            Content="截图"
+                                            Click="CaptureScreenButton_Click"
+                                            Margin="0,0,8,0"
+                                            Style="{StaticResource SecondaryButtonStyle}" />
+                                    <Button x:Name="SelectRealtimeRegionButton"
+                                            Content="选择区域"
+                                            Click="SelectRealtimeRegionButton_Click"
+                                            Margin="0,0,8,0"
+                                            Style="{StaticResource SecondaryButtonStyle}" />
+                                    <Button x:Name="StartRealtimeButton"
+                                            Content="Add Overlay"
+                                            Click="StartRealtimeButton_Click"
+                                            IsEnabled="False"
+                                            Margin="0,0,8,0"
+                                            Style="{StaticResource PrimaryButtonStyle}" />
+                                    <Button Content="选择图片"
+                                            Click="PickImageButton_Click"
+                                            Margin="0,0,0,0"
+                                            Style="{StaticResource SecondaryButtonStyle}" />
+                                </WrapPanel>
+                            </Grid>
+
+                            <Border Grid.Row="2"
+                                    Background="{StaticResource PanelAltBrush}"
+                                    BorderBrush="{StaticResource StrokeBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    ClipToBounds="True">
+                                <Grid>
+                                    <Image x:Name="PreviewImage"
+                                           Stretch="Uniform" />
+                                    <StackPanel HorizontalAlignment="Center"
+                                                VerticalAlignment="Center">
+                                        <TextBlock x:Name="EmptyPreviewText"
+                                                   Text="预览区"
+                                                   FontSize="26"
+                                                   FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center" />
+                                        <TextBlock Text="图片或区域截图会显示在这里"
+                                                   Margin="0,8,0,0"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}" />
+                                    </StackPanel>
+                                </Grid>
                             </Border>
+
+                            <Grid Grid.Row="4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Row="0"
+                                            Grid.Column="0">
+                                    <TextBlock Text="OCR 引擎"
+                                               Style="{StaticResource SectionLabelStyle}" />
+                                    <ComboBox x:Name="EngineSelectionBox"
+                                              SelectedIndex="0">
+                                        <ComboBoxItem Content="Auto - 优先 PaddleOCR，失败后回退"
+                                                      Tag="Auto" />
+                                        <ComboBoxItem Content="PaddleOCR"
+                                                      Tag="PaddleOcr" />
+                                        <ComboBoxItem Content="Windows App SDK AI OCR"
+                                                      Tag="WindowsAppSdk" />
+                                        <ComboBoxItem Content="Windows.Media.Ocr"
+                                                      Tag="WindowsMedia" />
+                                        <ComboBoxItem Content="Tesseract OCR"
+                                                      Tag="Tesseract" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0"
+                                            Grid.Column="2">
+                                    <TextBlock Text="识别语言"
+                                               Style="{StaticResource SectionLabelStyle}" />
+                                    <TextBox x:Name="LanguageTextBox"
+                                             Text="zh-Hans"
+                                             ToolTip="例如 zh-Hans、en-US、ja-JP，Tesseract 也支持 chi_sim、eng 等 traineddata 代码。" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="2"
+                                            Grid.ColumnSpan="3">
+                                    <TextBlock Text="PaddleOCR 模式"
+                                               Style="{StaticResource SectionLabelStyle}" />
+                                    <ComboBox x:Name="PaddleRuntimeModeBox"
+                                              SelectedIndex="0">
+                                        <ComboBoxItem Content="CPU"
+                                                      Tag="Cpu" />
+                                        <ComboBoxItem Content="GPU (RTX 5060 / CUDA)"
+                                                      Tag="Gpu" />
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
                         </Grid>
-                    </Grid>
-                </Border>
+                    </Border>
+
+                    <Border Grid.Column="2"
+                            Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource StrokeBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="20">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel>
+                                    <TextBlock Text="输出"
+                                               FontSize="20"
+                                               FontWeight="SemiBold" />
+                                    <TextBlock x:Name="StatusText"
+                                               Text="等待输入"
+                                               Margin="0,6,0,0"
+                                               Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+
+                                <WrapPanel Grid.Column="1"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Top">
+                                    <Button x:Name="CancelButton"
+                                            Content="取消"
+                                            Click="CancelButton_Click"
+                                            IsEnabled="False"
+                                            Margin="0,0,8,8"
+                                            Style="{StaticResource SecondaryButtonStyle}" />
+                                    <Button x:Name="RunOcrButton"
+                                            Content="开始 OCR"
+                                            Click="RunOcrButton_Click"
+                                            IsEnabled="False"
+                                            Margin="0,0,8,8"
+                                            Style="{StaticResource PrimaryButtonStyle}" />
+                                    <Button x:Name="TranslateButton"
+                                            Content="翻译"
+                                            Click="TranslateButton_Click"
+                                            IsEnabled="False"
+                                            Margin="0,0,0,8"
+                                            Style="{StaticResource SecondaryButtonStyle}" />
+                                </WrapPanel>
+                            </Grid>
+
+                            <Grid Grid.Row="2">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="8" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0"
+                                           Text="OCR 结果"
+                                           Style="{StaticResource SectionLabelStyle}" />
+                                <TextBox Grid.Row="2"
+                                         x:Name="ResultTextBox"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Style="{StaticResource OutputTextBoxStyle}"
+                                         Text="OCR 结果会显示在这里。" />
+                            </Grid>
+
+                            <Grid Grid.Row="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="0.9*" />
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="1.1*" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="目标语言"
+                                               Style="{StaticResource SectionLabelStyle}" />
+                                    <ComboBox x:Name="TargetLanguageBox"
+                                              ToolTip="选择翻译输出语言。">
+                                        <ComboBoxItem Content="简体中文"
+                                                      Tag="zh-Hans" />
+                                        <ComboBoxItem Content="English"
+                                                      Tag="en" />
+                                        <ComboBoxItem Content="日本語"
+                                                      Tag="ja" />
+                                        <ComboBoxItem Content="한국어"
+                                                      Tag="ko" />
+                                        <ComboBoxItem Content="繁體中文"
+                                                      Tag="zh-Hant" />
+                                        <ComboBoxItem Content="Français"
+                                                      Tag="fr" />
+                                        <ComboBoxItem Content="Deutsch"
+                                                      Tag="de" />
+                                        <ComboBoxItem Content="Español"
+                                                      Tag="es" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="DeepSeek API Key"
+                                               Style="{StaticResource SectionLabelStyle}" />
+                                    <PasswordBox x:Name="DeepSeekApiKeyBox"
+                                                 ToolTip="留空时读取 DEEPSEEK_API_KEY 环境变量。" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid Grid.Row="6">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="8" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0"
+                                           Text="翻译结果"
+                                           Style="{StaticResource SectionLabelStyle}" />
+                                <TextBox Grid.Row="2"
+                                         x:Name="TranslationTextBox"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Style="{StaticResource OutputTextBoxStyle}"
+                                         Text="翻译结果会显示在这里。" />
+                            </Grid>
+
+                            <DockPanel Grid.Row="8"
+                                       LastChildFill="False">
+                                <Border DockPanel.Dock="Left"
+                                        Background="#142131"
+                                        BorderBrush="#28415F"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="10,6">
+                                    <TextBlock Text="本地模式"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="12"
+                                               FontWeight="SemiBold" />
+                                </Border>
+
+                                <Border DockPanel.Dock="Right"
+                                        Background="#18281F"
+                                        BorderBrush="#2B5A42"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="10,6">
+                                    <TextBlock Text="Overlay Ready"
+                                               Foreground="#B8EBCF"
+                                               FontSize="12"
+                                               FontWeight="SemiBold" />
+                                </Border>
+                            </DockPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
             </Grid>
-        </Grid>
+        </Border>
     </Grid>
 </Window>

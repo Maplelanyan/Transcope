@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Globalization;
+using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -11,9 +12,13 @@ namespace Transcope.Ocr;
 internal sealed class PaddleOcrEngine : IOcrEngineAdapter
 {
     private const string PythonExecutableEnvironmentVariable = "PADDLEOCR_PYTHON";
+    private const string GpuPythonExecutableEnvironmentVariable = "PADDLEOCR_GPU_PYTHON";
     private const int AvailabilityTimeoutMilliseconds = 45_000;
     private const int RecognitionTimeoutMilliseconds = 120_000;
     private const string BridgeScriptRelativePath = "PaddleOcr\\paddle_ocr_bridge.py";
+
+    private static readonly ConcurrentDictionary<string, PaddleServerClient> ServerClients =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, bool> availabilityCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -50,6 +55,17 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
         ["ru-RU"] = "russian"
     };
 
+    static PaddleOcrEngine()
+    {
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            foreach (PaddleServerClient client in ServerClients.Values)
+            {
+                client.Dispose();
+            }
+        };
+    }
+
     public OcrEngineKind EngineKind => OcrEngineKind.PaddleOcr;
 
     public async ValueTask<bool> IsAvailableAsync(
@@ -57,7 +73,9 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
         CancellationToken cancellationToken)
     {
         string language = ResolveLanguage(options.LanguageTag);
-        if (availabilityCache.TryGetValue(language, out bool cachedAvailability))
+        string clientKey = CreateClientKey(language, options.PaddleRuntimeMode);
+
+        if (availabilityCache.TryGetValue(clientKey, out bool cachedAvailability))
         {
             return cachedAvailability;
         }
@@ -67,12 +85,12 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(AvailabilityTimeoutMilliseconds);
 
-            PaddleProcessResult result = await RunBridgeAsync(
-                ["--check", "--lang", language],
+            PaddleServerClient client = await GetOrCreateClientAsync(
+                language,
+                options.PaddleRuntimeMode,
                 timeout.Token).ConfigureAwait(false);
-
-            bool isAvailable = result.ExitCode == 0;
-            availabilityCache[language] = isAvailable;
+            bool isAvailable = await client.CheckAsync(timeout.Token).ConfigureAwait(false);
+            availabilityCache[clientKey] = isAvailable;
             return isAvailable;
         }
         catch (OperationCanceledException)
@@ -81,7 +99,7 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
         }
         catch
         {
-            availabilityCache[language] = false;
+            availabilityCache[clientKey] = false;
             return false;
         }
     }
@@ -93,6 +111,7 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
     {
         ArgumentNullException.ThrowIfNull(bitmap);
 
+        string language = ResolveLanguage(options.LanguageTag);
         string imagePath = Path.Combine(Path.GetTempPath(), $"transcope-paddleocr-{Guid.NewGuid():N}.png");
 
         try
@@ -103,37 +122,19 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(RecognitionTimeoutMilliseconds);
 
-            PaddleProcessResult processResult = await RunBridgeAsync(
-                ["--image", imagePath, "--lang", ResolveLanguage(options.LanguageTag)],
+            PaddleServerClient client = await GetOrCreateClientAsync(
+                language,
+                options.PaddleRuntimeMode,
                 timeout.Token).ConfigureAwait(false);
+            PaddleServerResponse response = await client.RecognizeAsync(imagePath, timeout.Token).ConfigureAwait(false);
 
-            if (processResult.ExitCode != 0)
+            if (!response.Ok)
             {
-                string message = string.IsNullOrWhiteSpace(processResult.Error)
-                    ? processResult.Output
-                    : processResult.Error;
-
                 throw new OcrEngineUnavailableException(
                     EngineKind,
-                    string.IsNullOrWhiteSpace(message)
+                    string.IsNullOrWhiteSpace(response.Error)
                         ? "PaddleOCR failed without diagnostic output."
-                        : message.Trim());
-            }
-
-            PaddleOcrBridgeResponse response;
-            try
-            {
-                response = DeserializeBridgeResponse(processResult.Output);
-            }
-            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
-            {
-                string details = CreatePaddleDiagnosticMessage(processResult, ex.Message);
-                throw new OcrEngineUnavailableException(EngineKind, details);
-            }
-
-            if (!string.IsNullOrWhiteSpace(response.Error))
-            {
-                throw new OcrEngineUnavailableException(EngineKind, response.Error);
+                        : response.Error.Trim());
             }
 
             OcrRecognizedLine[] lines = response.Items
@@ -147,7 +148,7 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
                 OcrEngineKind.PaddleOcr,
                 text,
                 lines,
-                ResolveLanguage(options.LanguageTag),
+                language,
                 TextAngle: null);
         }
         finally
@@ -165,37 +166,6 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
             item.Text.Trim(),
             boundary,
             [word]);
-    }
-
-    private static PaddleOcrBridgeResponse DeserializeBridgeResponse(string output)
-    {
-        string json = ExtractJsonObject(output);
-        return JsonSerializer.Deserialize<PaddleOcrBridgeResponse>(
-            json,
-            JsonOptions) ?? throw new InvalidOperationException("PaddleOCR returned an empty response.");
-    }
-
-    private static string ExtractJsonObject(string output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            throw new InvalidOperationException("PaddleOCR returned no JSON output.");
-        }
-
-        string trimmed = output.Trim();
-        if (trimmed.StartsWith('{') && trimmed.EndsWith('}'))
-        {
-            return trimmed;
-        }
-
-        int start = trimmed.LastIndexOf('{');
-        int end = trimmed.LastIndexOf('}');
-        if (start >= 0 && end > start)
-        {
-            return trimmed[start..(end + 1)];
-        }
-
-        throw new InvalidOperationException("PaddleOCR returned output without a JSON payload.");
     }
 
     private static OcrTextBoundary ToBoundary(double[][] box)
@@ -217,97 +187,72 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
         return new OcrPoint(point[0], point[1]);
     }
 
-    private static async Task<PaddleProcessResult> RunBridgeAsync(
-        IReadOnlyList<string> arguments,
+    private static async Task<PaddleServerClient> GetOrCreateClientAsync(
+        string language,
+        PaddleRuntimeMode runtimeMode,
         CancellationToken cancellationToken)
     {
-        string pythonExecutable = ResolvePythonExecutable();
-        string scriptPath = ResolveBridgeScriptPath();
+        string clientKey = CreateClientKey(language, runtimeMode);
+        PaddleServerClient client = ServerClients.GetOrAdd(
+            clientKey,
+            _ => new PaddleServerClient(language, runtimeMode));
 
-        ProcessStartInfo startInfo = new()
+        try
         {
-            FileName = pythonExecutable,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        startInfo.Environment["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True";
-        startInfo.Environment["GLOG_minloglevel"] = "2";
-        startInfo.Environment["FLAGS_use_mkldnn"] = "0";
-        startInfo.Environment["FLAGS_enable_pir_api"] = "0";
-
-        startInfo.ArgumentList.Add(scriptPath);
-        foreach (string argument in arguments)
+            await client.EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+            return client;
+        }
+        catch
         {
-            startInfo.ArgumentList.Add(argument);
+            if (ServerClients.TryRemove(new KeyValuePair<string, PaddleServerClient>(clientKey, client)))
+            {
+                client.Dispose();
+            }
+
+            throw;
+        }
+    }
+
+    private static string CreateClientKey(string language, PaddleRuntimeMode runtimeMode)
+    {
+        return $"{language}|{runtimeMode}";
+    }
+
+    private static string ResolvePythonExecutable(PaddleRuntimeMode runtimeMode)
+    {
+        if (runtimeMode == PaddleRuntimeMode.Gpu)
+        {
+            string? configuredGpuPython = ResolveConfiguredPython(GpuPythonExecutableEnvironmentVariable);
+            if (!string.IsNullOrWhiteSpace(configuredGpuPython))
+            {
+                return configuredGpuPython;
+            }
+
+            string? localGpuVirtualEnvironmentPython = FindAncestorFile(".venv-paddleocr-gpu\\Scripts\\python.exe");
+            if (!string.IsNullOrWhiteSpace(localGpuVirtualEnvironmentPython))
+            {
+                return localGpuVirtualEnvironmentPython;
+            }
+
+            throw new FileNotFoundException(
+                "PaddleOCR GPU Python was not found. Set PADDLEOCR_GPU_PYTHON or create .venv-paddleocr-gpu.");
         }
 
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start PaddleOCR Python process.");
-
-        Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-
-        string output = await outputTask.ConfigureAwait(false);
-        string error = await errorTask.ConfigureAwait(false);
-
-        return new PaddleProcessResult(process.ExitCode, output, error);
-    }
-
-    private static string CreatePaddleDiagnosticMessage(
-        PaddleProcessResult processResult,
-        string fallbackMessage)
-    {
-        if (!string.IsNullOrWhiteSpace(processResult.Output))
+        string? configuredPython = ResolveConfiguredPython(PythonExecutableEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredPython))
         {
-            return $"{fallbackMessage} Output: {Truncate(processResult.Output.Trim(), 800)}";
+            return configuredPython;
         }
 
-        string filteredError = FilterPaddleLog(processResult.Error);
-        return string.IsNullOrWhiteSpace(filteredError)
-            ? fallbackMessage
-            : $"{fallbackMessage} PaddleOCR log: {filteredError}";
+        string? localVirtualEnvironmentPython = FindAncestorFile(".venv-paddleocr\\Scripts\\python.exe");
+        return localVirtualEnvironmentPython ?? "python";
     }
 
-    private static string FilterPaddleLog(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        string[] noisyFragments =
-        [
-            "No ccache found",
-            "Creating model:",
-            "Model files already exist",
-            "WARNING: Logging before InitGoogleLogging",
-            "oneDNN"
-        ];
-
-        string[] lines = value
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n')
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(line => !noisyFragments.Any(fragment => line.Contains(fragment, StringComparison.OrdinalIgnoreCase)))
-            .ToArray();
-
-        return Truncate(string.Join(Environment.NewLine, lines), 800);
-    }
-
-    private static string Truncate(string value, int maxLength)
-    {
-        return value.Length <= maxLength ? value : value[..maxLength] + "...";
-    }
-
-    private static string ResolvePythonExecutable()
+    private static string? ResolveConfiguredPython(string environmentVariable)
     {
         string? configuredPython =
-            Environment.GetEnvironmentVariable(PythonExecutableEnvironmentVariable) ??
-            Environment.GetEnvironmentVariable(PythonExecutableEnvironmentVariable, EnvironmentVariableTarget.User);
+            Environment.GetEnvironmentVariable(environmentVariable) ??
+            Environment.GetEnvironmentVariable(environmentVariable, EnvironmentVariableTarget.User);
 
         if (!string.IsNullOrWhiteSpace(configuredPython))
         {
@@ -318,8 +263,12 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
             }
         }
 
-        string? localVirtualEnvironmentPython = FindAncestorFile(".venv-paddleocr\\Scripts\\python.exe");
-        return localVirtualEnvironmentPython ?? "python";
+        return null;
+    }
+
+    private static string ResolveBridgeDevice(PaddleRuntimeMode runtimeMode)
+    {
+        return runtimeMode == PaddleRuntimeMode.Gpu ? "gpu:0" : "cpu";
     }
 
     private static string ResolveBridgeScriptPath()
@@ -460,9 +409,254 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
         }
     }
 
-    private sealed record PaddleProcessResult(int ExitCode, string Output, string Error);
+    private sealed class PaddleServerClient : IDisposable
+    {
+        private readonly string language;
+        private readonly PaddleRuntimeMode runtimeMode;
+        private readonly SemaphoreSlim gate = new(1, 1);
+        private readonly SemaphoreSlim startGate = new(1, 1);
+        private Process? process;
+        private StreamWriter? standardInput;
+        private StreamReader? standardOutput;
+        private StreamReader? standardError;
+        private bool disposed;
 
-    private sealed record PaddleOcrBridgeResponse(
+        public PaddleServerClient(string language, PaddleRuntimeMode runtimeMode)
+        {
+            this.language = language;
+            this.runtimeMode = runtimeMode;
+        }
+
+        public async Task EnsureStartedAsync(CancellationToken cancellationToken)
+        {
+            if (process is { HasExited: false })
+            {
+                return;
+            }
+
+            await startGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (process is { HasExited: false })
+                {
+                    return;
+                }
+
+                DisposeProcessOnly();
+
+                ProcessStartInfo startInfo = new()
+                {
+                    FileName = ResolvePythonExecutable(runtimeMode),
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    StandardInputEncoding = Encoding.UTF8,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                startInfo.Environment["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True";
+                startInfo.Environment["GLOG_minloglevel"] = "2";
+                startInfo.Environment["FLAGS_use_mkldnn"] = "0";
+                startInfo.Environment["FLAGS_enable_pir_api"] = "0";
+
+                startInfo.ArgumentList.Add(ResolveBridgeScriptPath());
+                startInfo.ArgumentList.Add("--server");
+                startInfo.ArgumentList.Add("--lang");
+                startInfo.ArgumentList.Add(language);
+                startInfo.ArgumentList.Add("--device");
+                startInfo.ArgumentList.Add(ResolveBridgeDevice(runtimeMode));
+
+                process = Process.Start(startInfo)
+                    ?? throw new InvalidOperationException("Failed to start PaddleOCR server process.");
+
+                standardInput = process.StandardInput;
+                standardOutput = process.StandardOutput;
+                standardError = process.StandardError;
+
+                string? readyLine = await standardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                PaddleServerResponse ready = DeserializeResponse(readyLine);
+                if (!ready.Ok)
+                {
+                    string stderr = await standardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(ready.Error)
+                            ? FilterPaddleLog(stderr)
+                            : ready.Error);
+                }
+            }
+            finally
+            {
+                startGate.Release();
+            }
+        }
+
+        public async Task<bool> CheckAsync(CancellationToken cancellationToken)
+        {
+            await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+            return process is { HasExited: false };
+        }
+
+        public async Task<PaddleServerResponse> RecognizeAsync(string imagePath, CancellationToken cancellationToken)
+        {
+            await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                if (process is null || process.HasExited || standardInput is null || standardOutput is null)
+                {
+                    throw new InvalidOperationException("PaddleOCR server process is not running.");
+                }
+
+                string payload = JsonSerializer.Serialize(
+                    new PaddleServerRequest("recognize", imagePath),
+                    JsonOptions);
+
+                await standardInput.WriteLineAsync(payload).ConfigureAwait(false);
+                await standardInput.FlushAsync().ConfigureAwait(false);
+
+                string? responseLine = await standardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                PaddleServerResponse response = DeserializeResponse(responseLine);
+                if (response.Ok)
+                {
+                    return response;
+                }
+
+                string stderr = await TryReadErrorTailAsync(cancellationToken).ConfigureAwait(false);
+                return response with
+                {
+                    Error = string.IsNullOrWhiteSpace(response.Error)
+                        ? FilterPaddleLog(stderr)
+                        : response.Error
+                };
+            }
+            catch
+            {
+                DisposeProcessOnly();
+                throw;
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        public void Dispose()
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            DisposeProcessOnly();
+            gate.Dispose();
+            startGate.Dispose();
+        }
+
+        private async Task<string> TryReadErrorTailAsync(CancellationToken cancellationToken)
+        {
+            if (standardError is null || process is null || !process.HasExited)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return await standardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private void DisposeProcessOnly()
+        {
+            try
+            {
+                if (process is { HasExited: false } && standardInput is not null)
+                {
+                    string payload = JsonSerializer.Serialize(new PaddleServerRequest("exit", null), JsonOptions);
+                    standardInput.WriteLine(payload);
+                    standardInput.Flush();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (process is { HasExited: false })
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(2000);
+                }
+            }
+            catch
+            {
+            }
+
+            standardInput?.Dispose();
+            standardOutput?.Dispose();
+            standardError?.Dispose();
+            process?.Dispose();
+
+            standardInput = null;
+            standardOutput = null;
+            standardError = null;
+            process = null;
+        }
+    }
+
+    private static PaddleServerResponse DeserializeResponse(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            throw new InvalidOperationException("PaddleOCR server returned no response.");
+        }
+
+        return JsonSerializer.Deserialize<PaddleServerResponse>(line, JsonOptions)
+            ?? throw new InvalidOperationException("PaddleOCR server returned an invalid response.");
+    }
+
+    private static string FilterPaddleLog(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        string[] noisyFragments =
+        [
+            "No ccache found",
+            "Creating model:",
+            "Model files already exist",
+            "WARNING: Logging before InitGoogleLogging",
+            "oneDNN",
+            "INFO: Could not find files for the given pattern(s)."
+        ];
+
+        string[] lines = value
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !noisyFragments.Any(fragment => line.Contains(fragment, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private sealed record PaddleServerRequest(
+        [property: JsonPropertyName("command")] string Command,
+        [property: JsonPropertyName("image")] string? Image);
+
+    private sealed record PaddleServerResponse(
+        [property: JsonPropertyName("ok")] bool Ok,
         [property: JsonPropertyName("items")] IReadOnlyList<PaddleOcrBridgeItem> Items,
         [property: JsonPropertyName("error")] string? Error = null);
 
