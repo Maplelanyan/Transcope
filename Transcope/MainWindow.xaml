@@ -450,7 +450,7 @@
                                            FontWeight="SemiBold"
                                            Foreground="{StaticResource SubtleTextBrush}"
                                            HorizontalAlignment="Center" />
-                                <TextBlock Text="图片或屏幕区域会显示在这里"
+                                <TextBlock Visibility="Collapsed" Text="图片或屏幕区域会显示在这里"
                                            FontSize="12"
                                            Margin="0,7,0,0"
                                            Foreground="{StaticResource MutedTextBrush}"
