@@ -745,7 +745,7 @@ public partial class MainWindow : Window
         RunOcrButton.IsEnabled = !isBusy && HasSelectedInput;
         TranslateButton.IsEnabled = !isBusy && !string.IsNullOrWhiteSpace(lastRecognizedText);
         StartRealtimeButton.IsEnabled = !isBusy;
-        StartRealtimeButton.Content = "New Overlay";
+        StartRealtimeButton.Content = "新建覆盖框";
         CancelButton.IsEnabled = isBusy || HasOverlayWindows;
     }
 
