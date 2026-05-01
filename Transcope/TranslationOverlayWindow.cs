@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -275,6 +276,9 @@ internal sealed class OverlayControlWindow : Window
     private static readonly nint TopMostWindow = new(-1);
 
     private readonly Border frameBorder;
+    private readonly Border toolbarChrome;
+    private readonly Border sizeBadge;
+    private readonly TextBlock sizeBadgeText;
     private readonly Thumb dragThumb;
     private readonly Thumb resizeThumb;
     private readonly Button continueButton;
@@ -299,41 +303,87 @@ internal sealed class OverlayControlWindow : Window
 
         frameBorder = new Border
         {
-            BorderBrush = new SolidColorBrush(Color.FromArgb(210, 134, 192, 255)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(220, 77, 163, 255)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(6),
             Background = Brushes.Transparent,
+            Effect = new DropShadowEffect
+            {
+                Color = Color.FromRgb(77, 163, 255),
+                BlurRadius = 14,
+                ShadowDepth = 0,
+                Opacity = 0.22
+            },
             IsHitTestVisible = false
         };
 
-        Button closeButton = CreateControlButton("Close");
+        Button closeButton = CreateControlButton("X", "关闭覆盖框");
         closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
 
-        lockButton = CreateControlButton("Lock");
+        lockButton = CreateControlButton("锁", "锁定位置和大小");
         lockButton.Click += (_, _) => ToggleLock();
 
-        continueButton = CreateControlButton("Translate");
-        continueButton.MinWidth = 74;
+        continueButton = CreateControlButton("译", "继续翻译");
+        continueButton.MinWidth = 42;
         continueButton.PreviewMouseLeftButtonDown += ContinueButton_PreviewMouseLeftButtonDown;
         continueButton.Click += (_, _) => RequestContinueTranslation();
 
         StackPanel buttonBar = new()
         {
             Orientation = Orientation.Horizontal,
-            Background = new SolidColorBrush(Color.FromArgb(224, 12, 18, 31)),
-            Margin = new Thickness(8),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top
+            Margin = new Thickness(5, 4, 5, 4)
         };
         buttonBar.Children.Add(closeButton);
         buttonBar.Children.Add(lockButton);
         buttonBar.Children.Add(continueButton);
 
+        toolbarChrome = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(238, 14, 18, 28)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(130, 122, 180, 255)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(9),
+            Child = buttonBar,
+            Margin = new Thickness(8),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Effect = new DropShadowEffect
+            {
+                Color = Colors.Black,
+                BlurRadius = 18,
+                ShadowDepth = 0,
+                Opacity = 0.45
+            }
+        };
+
+        sizeBadgeText = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.FromArgb(230, 231, 238, 248)),
+            FontFamily = new FontFamily("Cascadia Code, Consolas"),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold
+        };
+
+        sizeBadge = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(214, 14, 18, 28)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(110, 122, 180, 255)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(8, 4, 8, 4),
+            Margin = new Thickness(0, 0, 10, 10),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Child = sizeBadgeText,
+            IsHitTestVisible = false
+        };
+
         dragThumb = new Thumb
         {
-            Height = 28,
-            Margin = new Thickness(8, 8, 8, 0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Width = 134,
+            Height = 38,
+            Margin = new Thickness(8),
+            HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
             Cursor = System.Windows.Input.Cursors.SizeAll,
             Background = Brushes.Transparent,
@@ -343,20 +393,22 @@ internal sealed class OverlayControlWindow : Window
 
         resizeThumb = new Thumb
         {
-            Width = 18,
-            Height = 18,
+            Width = 26,
+            Height = 26,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 4, 4),
             Cursor = System.Windows.Input.Cursors.SizeNWSE,
-            Background = new SolidColorBrush(Color.FromArgb(220, 134, 192, 255))
+            Background = Brushes.Transparent,
+            Template = CreateResizeThumbTemplate()
         };
         resizeThumb.DragDelta += ResizeThumb_DragDelta;
 
         Grid root = new();
         root.Children.Add(frameBorder);
         root.Children.Add(dragThumb);
-        root.Children.Add(buttonBar);
+        root.Children.Add(toolbarChrome);
+        root.Children.Add(sizeBadge);
         root.Children.Add(resizeThumb);
 
         Content = root;
@@ -374,7 +426,8 @@ internal sealed class OverlayControlWindow : Window
     public void SetTranslationRunning(bool isRunning)
     {
         continueButton.IsEnabled = !isRunning;
-        continueButton.Content = isRunning ? "Working" : "Translate";
+        continueButton.Content = isRunning ? "..." : "译";
+        continueButton.ToolTip = isRunning ? "正在翻译" : "继续翻译";
     }
 
     public void SyncBounds(ScreenCaptureBounds updatedBounds)
@@ -384,6 +437,7 @@ internal sealed class OverlayControlWindow : Window
         Top = bounds.Y;
         Width = bounds.Width;
         Height = bounds.Height;
+        sizeBadgeText.Text = $"{bounds.Width} x {bounds.Height}";
 
         if (new WindowInteropHelper(this).Handle != nint.Zero)
         {
@@ -399,23 +453,113 @@ internal sealed class OverlayControlWindow : Window
         }
     }
 
-    private static Button CreateControlButton(string content)
+    private static Button CreateControlButton(string content, string tooltip)
     {
-        return new Button
+        Button button = new()
         {
             Content = content,
-            Margin = new Thickness(0, 0, 6, 0),
-            Padding = new Thickness(10, 4, 10, 4),
-            MinWidth = 56,
-            MinHeight = 28,
-            Background = new SolidColorBrush(Color.FromArgb(232, 246, 250, 255)),
-            Foreground = new SolidColorBrush(Color.FromRgb(22, 29, 40)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(255, 134, 192, 255)),
+            ToolTip = tooltip,
+            Margin = new Thickness(2, 0, 2, 0),
+            Padding = new Thickness(0),
+            MinWidth = 34,
+            MinHeight = 30,
+            Background = new SolidColorBrush(Color.FromArgb(0, 255, 255, 255)),
+            Foreground = new SolidColorBrush(Color.FromRgb(235, 242, 252)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0, 255, 255, 255)),
             BorderThickness = new Thickness(1),
-            FontSize = 12,
+            FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Focusable = false,
-            IsTabStop = false
+            IsTabStop = false,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Template = CreateControlButtonTemplate()
+        };
+
+        return button;
+    }
+
+    private static ControlTemplate CreateControlButtonTemplate()
+    {
+        FrameworkElementFactory border = new(typeof(Border));
+        border.Name = "Chrome";
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+
+        FrameworkElementFactory presenter = new(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        presenter.SetValue(ContentPresenter.MarginProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        presenter.SetValue(TextElement.ForegroundProperty, new TemplateBindingExtension(Control.ForegroundProperty));
+        border.AppendChild(presenter);
+
+        ControlTemplate template = new(typeof(Button))
+        {
+            VisualTree = border
+        };
+
+        Trigger hoverTrigger = new()
+        {
+            Property = UIElement.IsMouseOverProperty,
+            Value = true
+        };
+        hoverTrigger.Setters.Add(new Setter(
+            Control.BackgroundProperty,
+            new SolidColorBrush(Color.FromArgb(34, 255, 255, 255)),
+            "Chrome"));
+        hoverTrigger.Setters.Add(new Setter(
+            Control.BorderBrushProperty,
+            new SolidColorBrush(Color.FromArgb(130, 122, 180, 255)),
+            "Chrome"));
+        template.Triggers.Add(hoverTrigger);
+
+        Trigger pressedTrigger = new()
+        {
+            Property = ButtonBase.IsPressedProperty,
+            Value = true
+        };
+        pressedTrigger.Setters.Add(new Setter(
+            Control.BackgroundProperty,
+            new SolidColorBrush(Color.FromArgb(70, 77, 163, 255)),
+            "Chrome"));
+        template.Triggers.Add(pressedTrigger);
+
+        Trigger disabledTrigger = new()
+        {
+            Property = UIElement.IsEnabledProperty,
+            Value = false
+        };
+        disabledTrigger.Setters.Add(new Setter(UIElement.OpacityProperty, 0.48, "Chrome"));
+        template.Triggers.Add(disabledTrigger);
+
+        return template;
+    }
+
+    private static ControlTemplate CreateResizeThumbTemplate()
+    {
+        FrameworkElementFactory canvas = new(typeof(Canvas));
+        canvas.SetValue(FrameworkElement.WidthProperty, 26.0);
+        canvas.SetValue(FrameworkElement.HeightProperty, 26.0);
+
+        for (int index = 0; index < 3; index++)
+        {
+            FrameworkElementFactory line = new(typeof(Line));
+            double offset = 8 + index * 5;
+            line.SetValue(Line.X1Property, offset);
+            line.SetValue(Line.Y1Property, 22.0);
+            line.SetValue(Line.X2Property, 22.0);
+            line.SetValue(Line.Y2Property, offset);
+            line.SetValue(Shape.StrokeProperty, new SolidColorBrush(Color.FromArgb(210, 122, 180, 255)));
+            line.SetValue(Shape.StrokeThicknessProperty, 2.0);
+            line.SetValue(Shape.StrokeStartLineCapProperty, PenLineCap.Round);
+            line.SetValue(Shape.StrokeEndLineCapProperty, PenLineCap.Round);
+            canvas.AppendChild(line);
+        }
+
+        return new ControlTemplate(typeof(Thumb))
+        {
+            VisualTree = canvas
         };
     }
 
@@ -450,12 +594,15 @@ internal sealed class OverlayControlWindow : Window
 
     private void UpdateLockVisualState()
     {
-        lockButton.Content = isLocked ? "Unlock" : "Lock";
+        lockButton.Content = isLocked ? "解" : "锁";
+        lockButton.ToolTip = isLocked ? "解除锁定" : "锁定位置和大小";
         dragThumb.Visibility = isLocked ? Visibility.Collapsed : Visibility.Visible;
         resizeThumb.Visibility = isLocked ? Visibility.Collapsed : Visibility.Visible;
+        sizeBadge.Visibility = isLocked ? Visibility.Collapsed : Visibility.Visible;
         frameBorder.BorderBrush = isLocked
-            ? new SolidColorBrush(Color.FromArgb(150, 134, 192, 255))
-            : new SolidColorBrush(Color.FromArgb(210, 134, 192, 255));
+            ? new SolidColorBrush(Color.FromArgb(125, 122, 180, 255))
+            : new SolidColorBrush(Color.FromArgb(220, 77, 163, 255));
+        toolbarChrome.Opacity = isLocked ? 0.84 : 1.0;
     }
 
     private void DragThumb_DragDelta(object sender, DragDeltaEventArgs e)
