@@ -34,6 +34,8 @@ internal sealed class TranslationOverlayWindow : Window
         controlWindow = new OverlayControlWindow(bounds);
         controlWindow.ContinueTranslationRequested += (_, _) =>
             ContinueTranslationRequested?.Invoke(this, EventArgs.Empty);
+        controlWindow.AutoTranslationChanged += (_, e) =>
+            AutoTranslationChanged?.Invoke(this, e);
         controlWindow.CloseRequested += (_, _) => Close();
         controlWindow.BoundsChanged += (_, e) => ApplyBounds(e.Bounds, notify: true);
 
@@ -72,6 +74,8 @@ internal sealed class TranslationOverlayWindow : Window
     }
 
     public event EventHandler? ContinueTranslationRequested;
+
+    public event EventHandler<OverlayAutoTranslationChangedEventArgs>? AutoTranslationChanged;
 
     public event EventHandler<OverlayBoundsChangedEventArgs>? BoundsChanged;
 
@@ -262,6 +266,16 @@ internal sealed class OverlayBoundsChangedEventArgs : EventArgs
     public ScreenCaptureBounds Bounds { get; }
 }
 
+internal sealed class OverlayAutoTranslationChangedEventArgs : EventArgs
+{
+    public OverlayAutoTranslationChangedEventArgs(bool isEnabled)
+    {
+        IsEnabled = isEnabled;
+    }
+
+    public bool IsEnabled { get; }
+}
+
 internal sealed class OverlayControlWindow : Window
 {
     private const int ExtendedWindowStyleIndex = -20;
@@ -273,8 +287,12 @@ internal sealed class OverlayControlWindow : Window
     private const uint WindowDisplayAffinityExcludeFromCapture = 0x00000011;
     private const double MinimumWidth = 120;
     private const double MinimumHeight = 72;
+    private const double ToolbarOutsideHeight = 48;
+    private const double ToolbarGap = 6;
+    private const double ToolbarMinimumWidth = 236;
     private static readonly nint TopMostWindow = new(-1);
 
+    private readonly Canvas root;
     private readonly Border frameBorder;
     private readonly Border toolbarChrome;
     private readonly Border sizeBadge;
@@ -283,6 +301,7 @@ internal sealed class OverlayControlWindow : Window
     private readonly Thumb resizeThumb;
     private readonly Button continueButton;
     private readonly Button lockButton;
+    private readonly ToggleButton autoSwitch;
     private ScreenCaptureBounds bounds;
     private bool isLocked;
     private DateTime lastRequestUtc = DateTime.MinValue;
@@ -328,14 +347,50 @@ internal sealed class OverlayControlWindow : Window
         continueButton.PreviewMouseLeftButtonDown += ContinueButton_PreviewMouseLeftButtonDown;
         continueButton.Click += (_, _) => RequestContinueTranslation();
 
+        autoSwitch = new ToggleButton
+        {
+            Content = "AUTO",
+            ToolTip = "实时自动翻译",
+            Width = 62,
+            Height = 30,
+            Margin = new Thickness(2, 0, 2, 0),
+            Background = new SolidColorBrush(Color.FromArgb(0, 255, 255, 255)),
+            Foreground = new SolidColorBrush(Color.FromRgb(205, 218, 236)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Focusable = false,
+            IsTabStop = false,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Template = CreateAutoSwitchTemplate()
+        };
+        autoSwitch.Checked += AutoSwitch_Changed;
+        autoSwitch.Unchecked += AutoSwitch_Changed;
+
+        dragThumb = new Thumb
+        {
+            Width = 30,
+            Height = 30,
+            Margin = new Thickness(2, 0, 4, 0),
+            Cursor = System.Windows.Input.Cursors.SizeAll,
+            Background = Brushes.Transparent,
+            ToolTip = "Move overlay",
+            Focusable = false,
+            Template = CreateDragThumbTemplate()
+        };
+        dragThumb.DragDelta += DragThumb_DragDelta;
+
         StackPanel buttonBar = new()
         {
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(5, 4, 5, 4)
         };
+        buttonBar.Children.Add(dragThumb);
         buttonBar.Children.Add(closeButton);
         buttonBar.Children.Add(lockButton);
         buttonBar.Children.Add(continueButton);
+        buttonBar.Children.Add(autoSwitch);
 
         toolbarChrome = new Border
         {
@@ -344,9 +399,7 @@ internal sealed class OverlayControlWindow : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(9),
             Child = buttonBar,
-            Margin = new Thickness(8),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0),
             Effect = new DropShadowEffect
             {
                 Color = Colors.Black,
@@ -371,42 +424,25 @@ internal sealed class OverlayControlWindow : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(7),
             Padding = new Thickness(8, 4, 8, 4),
-            Margin = new Thickness(0, 0, 10, 10),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Bottom,
             Child = sizeBadgeText,
             IsHitTestVisible = false
         };
-
-        dragThumb = new Thumb
-        {
-            Width = 134,
-            Height = 38,
-            Margin = new Thickness(8),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
-            Cursor = System.Windows.Input.Cursors.SizeAll,
-            Background = Brushes.Transparent,
-            Opacity = 0
-        };
-        dragThumb.DragDelta += DragThumb_DragDelta;
 
         resizeThumb = new Thumb
         {
             Width = 26,
             Height = 26,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 4, 4),
             Cursor = System.Windows.Input.Cursors.SizeNWSE,
             Background = Brushes.Transparent,
             Template = CreateResizeThumbTemplate()
         };
         resizeThumb.DragDelta += ResizeThumb_DragDelta;
 
-        Grid root = new();
+        root = new Canvas
+        {
+            Background = Brushes.Transparent
+        };
         root.Children.Add(frameBorder);
-        root.Children.Add(dragThumb);
         root.Children.Add(toolbarChrome);
         root.Children.Add(sizeBadge);
         root.Children.Add(resizeThumb);
@@ -421,6 +457,8 @@ internal sealed class OverlayControlWindow : Window
 
     public event EventHandler? CloseRequested;
 
+    public event EventHandler<OverlayAutoTranslationChangedEventArgs>? AutoTranslationChanged;
+
     public event EventHandler<OverlayBoundsChangedEventArgs>? BoundsChanged;
 
     public void SetTranslationRunning(bool isRunning)
@@ -433,11 +471,38 @@ internal sealed class OverlayControlWindow : Window
     public void SyncBounds(ScreenCaptureBounds updatedBounds)
     {
         bounds = NormalizeBounds(updatedBounds);
-        Left = bounds.X;
-        Top = bounds.Y;
-        Width = bounds.Width;
-        Height = bounds.Height;
+        bool placeToolbarAbove = bounds.Y - ToolbarOutsideHeight >= SystemParameters.VirtualScreenTop;
+        double frameTop = placeToolbarAbove ? ToolbarOutsideHeight : 0;
+        double toolbarTop = placeToolbarAbove ? 0 : bounds.Height + ToolbarGap;
+        double windowWidth = Math.Max(bounds.Width, ToolbarMinimumWidth);
+        double windowHeight = bounds.Height + ToolbarOutsideHeight;
+        int windowLeft = bounds.X;
+        int windowTop = placeToolbarAbove
+            ? bounds.Y - (int)Math.Ceiling(ToolbarOutsideHeight)
+            : bounds.Y;
+
+        Left = windowLeft;
+        Top = windowTop;
+        Width = windowWidth;
+        Height = windowHeight;
+        root.Width = windowWidth;
+        root.Height = windowHeight;
+
+        frameBorder.Width = bounds.Width;
+        frameBorder.Height = bounds.Height;
+        Canvas.SetLeft(frameBorder, 0);
+        Canvas.SetTop(frameBorder, frameTop);
+
+        Canvas.SetLeft(toolbarChrome, 0);
+        Canvas.SetTop(toolbarChrome, toolbarTop);
+
         sizeBadgeText.Text = $"{bounds.Width} x {bounds.Height}";
+        sizeBadge.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        Canvas.SetLeft(sizeBadge, Math.Max(0, bounds.Width - sizeBadge.DesiredSize.Width - 10));
+        Canvas.SetTop(sizeBadge, frameTop + Math.Max(0, bounds.Height - sizeBadge.DesiredSize.Height - 10));
+
+        Canvas.SetLeft(resizeThumb, Math.Max(0, bounds.Width - 30));
+        Canvas.SetTop(resizeThumb, frameTop + Math.Max(0, bounds.Height - 30));
 
         if (new WindowInteropHelper(this).Handle != nint.Zero)
         {
@@ -445,10 +510,10 @@ internal sealed class OverlayControlWindow : Window
             _ = SetWindowPos(
                 handle,
                 TopMostWindow,
-                bounds.X,
-                bounds.Y,
-                bounds.Width,
-                bounds.Height,
+                windowLeft,
+                windowTop,
+                (int)Math.Ceiling(windowWidth),
+                (int)Math.Ceiling(windowHeight),
                 SetWindowPositionNoActivate | SetWindowPositionShowWindow);
         }
     }
@@ -536,6 +601,84 @@ internal sealed class OverlayControlWindow : Window
         return template;
     }
 
+    private static ControlTemplate CreateAutoSwitchTemplate()
+    {
+        FrameworkElementFactory border = new(typeof(Border));
+        border.Name = "Chrome";
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
+
+        FrameworkElementFactory presenter = new(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        presenter.SetValue(TextElement.ForegroundProperty, new TemplateBindingExtension(Control.ForegroundProperty));
+        border.AppendChild(presenter);
+
+        ControlTemplate template = new(typeof(ToggleButton))
+        {
+            VisualTree = border
+        };
+
+        Trigger checkedTrigger = new()
+        {
+            Property = ToggleButton.IsCheckedProperty,
+            Value = true
+        };
+        checkedTrigger.Setters.Add(new Setter(
+            Control.BackgroundProperty,
+            new SolidColorBrush(Color.FromArgb(220, 39, 126, 87)),
+            "Chrome"));
+        checkedTrigger.Setters.Add(new Setter(
+            Control.BorderBrushProperty,
+            new SolidColorBrush(Color.FromArgb(230, 86, 211, 145)),
+            "Chrome"));
+        checkedTrigger.Setters.Add(new Setter(
+            Control.ForegroundProperty,
+            Brushes.White));
+        template.Triggers.Add(checkedTrigger);
+
+        Trigger hoverTrigger = new()
+        {
+            Property = UIElement.IsMouseOverProperty,
+            Value = true
+        };
+        hoverTrigger.Setters.Add(new Setter(
+            Control.BorderBrushProperty,
+            new SolidColorBrush(Color.FromArgb(150, 122, 180, 255)),
+            "Chrome"));
+        template.Triggers.Add(hoverTrigger);
+
+        return template;
+    }
+
+    private static ControlTemplate CreateDragThumbTemplate()
+    {
+        FrameworkElementFactory canvas = new(typeof(Canvas));
+        canvas.SetValue(FrameworkElement.WidthProperty, 30.0);
+        canvas.SetValue(FrameworkElement.HeightProperty, 30.0);
+
+        for (int column = 0; column < 2; column++)
+        {
+            for (int row = 0; row < 3; row++)
+            {
+                FrameworkElementFactory dot = new(typeof(Ellipse));
+                dot.SetValue(FrameworkElement.WidthProperty, 3.2);
+                dot.SetValue(FrameworkElement.HeightProperty, 3.2);
+                dot.SetValue(Shape.FillProperty, new SolidColorBrush(Color.FromArgb(210, 196, 214, 238)));
+                dot.SetValue(Canvas.LeftProperty, 10.0 + column * 6);
+                dot.SetValue(Canvas.TopProperty, 8.0 + row * 6);
+                canvas.AppendChild(dot);
+            }
+        }
+
+        return new ControlTemplate(typeof(Thumb))
+        {
+            VisualTree = canvas
+        };
+    }
+
     private static ControlTemplate CreateResizeThumbTemplate()
     {
         FrameworkElementFactory canvas = new(typeof(Canvas));
@@ -584,6 +727,13 @@ internal sealed class OverlayControlWindow : Window
 
         lastRequestUtc = now;
         ContinueTranslationRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void AutoSwitch_Changed(object sender, RoutedEventArgs e)
+    {
+        AutoTranslationChanged?.Invoke(
+            this,
+            new OverlayAutoTranslationChangedEventArgs(autoSwitch.IsChecked == true));
     }
 
     private void ToggleLock()
@@ -658,14 +808,7 @@ internal sealed class OverlayControlWindow : Window
             ExtendedWindowStyleIndex,
             style | WindowExLayered | WindowExToolWindow | WindowExNoActivate);
 
-        _ = SetWindowPos(
-            handle,
-            TopMostWindow,
-            bounds.X,
-            bounds.Y,
-            bounds.Width,
-            bounds.Height,
-            SetWindowPositionNoActivate | SetWindowPositionShowWindow);
+        SyncBounds(bounds);
 
         _ = SetWindowDisplayAffinity(handle, WindowDisplayAffinityExcludeFromCapture);
     }

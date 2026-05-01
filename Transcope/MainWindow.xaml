@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Transcope"
+        Icon="Assets/AppIcon.ico"
         Width="1280"
         Height="820"
         MinWidth="1060"
@@ -408,29 +409,33 @@
                                        Margin="0,5,0,0" />
                         </StackPanel>
 
-                        <UniformGrid Grid.Row="2"
-                                     Columns="2"
-                                     Rows="2">
+                        <Grid Grid.Row="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="12" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
                             <Button x:Name="CaptureScreenButton"
                                     Content="截图"
                                     Click="CaptureScreenButton_Click"
-                                    Margin="0,0,6,6"
                                     Style="{StaticResource ToolbarButtonStyle}" />
-                            <Button Content="选择图片"
+                            <Button Grid.Column="2"
+                                    Content="选择图片"
                                     Click="PickImageButton_Click"
-                                    Margin="6,0,0,6"
                                     Style="{StaticResource ToolbarButtonStyle}" />
-                            <Button x:Name="SelectRealtimeRegionButton"
-                                    Content="选择区域"
+                            <Button Grid.Row="2"
+                                    Grid.ColumnSpan="3"
+                                    x:Name="SelectRealtimeRegionButton"
+                                    Content="选择翻译区域"
                                     Click="SelectRealtimeRegionButton_Click"
-                                    Margin="0,6,6,0"
-                                    Style="{StaticResource ToolbarButtonStyle}" />
-                            <Button x:Name="StartRealtimeButton"
-                                    Content="新建覆盖框"
-                                    Click="StartRealtimeButton_Click"
-                                    Margin="6,6,0,0"
                                     Style="{StaticResource PrimaryButtonStyle}" />
-                        </UniformGrid>
+                        </Grid>
                     </Grid>
 
                     <Border Grid.Row="2"
@@ -496,9 +501,28 @@
                                     Grid.Column="0">
                             <TextBlock Text="识别语言"
                                        Style="{StaticResource SmallLabelStyle}" />
-                            <TextBox x:Name="LanguageTextBox"
-                                     Text="zh-Hans"
-                                     ToolTip="例如 zh-Hans, en-US, ja-JP。Tesseract 也可使用 chi_sim, eng 等 traineddata 代码。" />
+                            <ComboBox x:Name="OcrLanguageBox"
+                                      SelectedIndex="0"
+                                      ToolTip="选择 OCR 识别语言。PaddleOCR/Windows OCR 使用 BCP-47 代码；Tesseract 会自动映射常用语言。">
+                                <ComboBoxItem Content="简体中文"
+                                              Tag="zh-Hans" />
+                                <ComboBoxItem Content="English"
+                                              Tag="en-US" />
+                                <ComboBoxItem Content="日本語"
+                                              Tag="ja-JP" />
+                                <ComboBoxItem Content="한국어"
+                                              Tag="ko-KR" />
+                                <ComboBoxItem Content="繁體中文"
+                                              Tag="zh-Hant" />
+                                <ComboBoxItem Content="Français"
+                                              Tag="fr-FR" />
+                                <ComboBoxItem Content="Deutsch"
+                                              Tag="de-DE" />
+                                <ComboBoxItem Content="Español"
+                                              Tag="es-ES" />
+                                <ComboBoxItem Content="自动检测"
+                                              Tag="" />
+                            </ComboBox>
                         </StackPanel>
 
                         <StackPanel Grid.Row="2"
@@ -585,7 +609,7 @@
                                     Margin="0,0,8,0"
                                     Style="{StaticResource ToolbarButtonStyle}" />
                             <Button x:Name="RunOcrButton"
-                                    Content="开始 OCR"
+                                    Content="文本识别"
                                     Click="RunOcrButton_Click"
                                     IsEnabled="False"
                                     Margin="0,0,8,0"

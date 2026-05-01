@@ -461,6 +461,8 @@ internal sealed class PaddleOcrEngine : IOcrEngineAdapter
                 startInfo.Environment["GLOG_minloglevel"] = "2";
                 startInfo.Environment["FLAGS_use_mkldnn"] = "0";
                 startInfo.Environment["FLAGS_enable_pir_api"] = "0";
+                startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
+                startInfo.Environment["PYTHONUTF8"] = "1";
 
                 startInfo.ArgumentList.Add(ResolveBridgeScriptPath());
                 startInfo.ArgumentList.Add("--server");

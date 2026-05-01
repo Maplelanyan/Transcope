@@ -14,6 +14,8 @@ namespace Transcope;
 
 public partial class MainWindow : Window
 {
+    private const int AutoOverlayTranslationIntervalMilliseconds = 1200;
+
     private readonly IOcrRecognizer ocrRecognizer = new OcrRecognizer();
     private readonly IScreenCaptureService screenCaptureService = new ScreenCaptureService();
     private readonly HttpClient translationHttpClient = new();
@@ -40,6 +42,7 @@ public partial class MainWindow : Window
     {
         EngineSelectionBox.SelectedIndex = 0;
         PaddleRuntimeModeBox.SelectedIndex = 0;
+        OcrLanguageBox.SelectedIndex = 0;
         TargetLanguageBox.SelectedIndex = 0;
         LoadSavedSettings();
         RefreshActionButtons();
@@ -149,16 +152,6 @@ public partial class MainWindow : Window
         _ = await SelectRealtimeRegionAsync();
     }
 
-    private async void StartRealtimeButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (isRecognizing || isTranslating)
-        {
-            return;
-        }
-
-        _ = await SelectRealtimeRegionAsync();
-    }
-
     private async Task<bool> SelectRealtimeRegionAsync()
     {
         try
@@ -196,6 +189,7 @@ public partial class MainWindow : Window
     {
         TranslationOverlayWindow overlay = new(bounds);
         overlay.ContinueTranslationRequested += Overlay_ContinueTranslationRequested;
+        overlay.AutoTranslationChanged += Overlay_AutoTranslationChanged;
         overlay.BoundsChanged += Overlay_BoundsChanged;
         overlay.Closed += Overlay_Closed;
         overlay.Show();
@@ -210,12 +204,31 @@ public partial class MainWindow : Window
     {
         if (sender is not TranslationOverlayWindow overlay ||
             !overlaySessions.TryGetValue(overlay, out OverlaySession? session) ||
-            isTranslating)
+            isTranslating ||
+            session.IsTranslationRunning)
         {
             return;
         }
 
         await RunOverlayTranslationOnceAsync(session);
+    }
+
+    private void Overlay_AutoTranslationChanged(object? sender, OverlayAutoTranslationChangedEventArgs e)
+    {
+        if (sender is not TranslationOverlayWindow overlay ||
+            !overlaySessions.TryGetValue(overlay, out OverlaySession? session))
+        {
+            return;
+        }
+
+        if (e.IsEnabled)
+        {
+            StartOverlayAutoTranslation(session);
+        }
+        else
+        {
+            StopOverlayAutoTranslation(session);
+        }
     }
 
     private void Overlay_BoundsChanged(object? sender, OverlayBoundsChangedEventArgs e)
@@ -224,6 +237,7 @@ public partial class MainWindow : Window
             overlaySessions.TryGetValue(overlay, out OverlaySession? session))
         {
             session.Bounds = e.Bounds;
+            session.LastRecognizedText = null;
             StatusText.Text = $"Overlay updated: {e.Bounds.Width} x {e.Bounds.Height}";
         }
     }
@@ -236,10 +250,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        StopOverlayAutoTranslation(session);
         session.Cancellation?.Cancel();
         session.Cancellation?.Dispose();
 
         overlay.ContinueTranslationRequested -= Overlay_ContinueTranslationRequested;
+        overlay.AutoTranslationChanged -= Overlay_AutoTranslationChanged;
         overlay.BoundsChanged -= Overlay_BoundsChanged;
         overlay.Closed -= Overlay_Closed;
         overlaySessions.Remove(overlay);
@@ -250,21 +266,91 @@ public partial class MainWindow : Window
         RefreshActionButtons();
     }
 
-    private async Task RunOverlayTranslationOnceAsync(OverlaySession session)
+    private void StartOverlayAutoTranslation(OverlaySession session)
     {
-        session.Cancellation?.Cancel();
-        session.Cancellation?.Dispose();
-        session.Cancellation = new CancellationTokenSource();
-        CancellationTokenSource currentCancellation = session.Cancellation;
-        CancellationToken cancellationToken = currentCancellation.Token;
+        if (session.AutoCancellation is not null)
+        {
+            return;
+        }
 
-        session.Overlay.SetTranslationRunning(true);
-        SetTranslationState(isRunning: true, "Translating overlay...");
+        session.LastRecognizedText = null;
+        CancellationTokenSource cancellation = new();
+        session.AutoCancellation = cancellation;
+        StatusText.Text = "Auto overlay translation enabled.";
+        _ = RunOverlayAutoTranslationLoopAsync(session, cancellation);
+    }
+
+    private void StopOverlayAutoTranslation(OverlaySession session)
+    {
+        session.AutoCancellation?.Cancel();
+        session.AutoCancellation?.Dispose();
+        session.AutoCancellation = null;
+        StatusText.Text = "Auto overlay translation disabled.";
+    }
+
+    private async Task RunOverlayAutoTranslationLoopAsync(
+        OverlaySession session,
+        CancellationTokenSource cancellation)
+    {
+        CancellationToken cancellationToken = cancellation.Token;
 
         try
         {
-            await Dispatcher.InvokeAsync(session.Overlay.HideControls);
+            while (!cancellationToken.IsCancellationRequested &&
+                overlaySessions.ContainsKey(session.Overlay))
+            {
+                await RunOverlayTranslationOnceAsync(
+                    session,
+                    skipIfTextUnchanged: true,
+                    initiatedByAuto: true,
+                    externalCancellationToken: cancellationToken);
 
+                await Task.Delay(AutoOverlayTranslationIntervalMilliseconds, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(session.AutoCancellation, cancellation))
+            {
+                cancellation.Dispose();
+                session.AutoCancellation = null;
+            }
+        }
+    }
+
+    private async Task RunOverlayTranslationOnceAsync(
+        OverlaySession session,
+        bool skipIfTextUnchanged = false,
+        bool initiatedByAuto = false,
+        CancellationToken externalCancellationToken = default)
+    {
+        if (session.IsTranslationRunning)
+        {
+            return;
+        }
+
+        session.Cancellation?.Cancel();
+        session.Cancellation?.Dispose();
+        session.Cancellation = CancellationTokenSource.CreateLinkedTokenSource(externalCancellationToken);
+        CancellationTokenSource currentCancellation = session.Cancellation;
+        CancellationToken cancellationToken = currentCancellation.Token;
+        session.IsTranslationRunning = true;
+
+        session.Overlay.SetTranslationRunning(true);
+        if (initiatedByAuto)
+        {
+            StatusText.Text = "Auto scanning overlay...";
+        }
+        else
+        {
+            SetTranslationState(isRunning: true, "Translating overlay...");
+        }
+
+        try
+        {
             ScreenCaptureResult capture = await Task.Run(
                 () => screenCaptureService.Capture(session.Bounds),
                 cancellationToken);
@@ -274,6 +360,22 @@ public partial class MainWindow : Window
                 OcrRecognitionResult ocrResult = await RecognizeTextAsync(
                     capture.SoftwareBitmap,
                     cancellationToken);
+
+                string recognizedText = NormalizeOverlayRecognizedText(ocrResult.Text);
+                if (skipIfTextUnchanged &&
+                    string.Equals(session.LastRecognizedText, recognizedText, StringComparison.Ordinal))
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (overlaySessions.ContainsKey(session.Overlay))
+                        {
+                            StatusText.Text = $"Auto checked at {DateTime.Now:HH:mm:ss}: text unchanged.";
+                        }
+                    });
+                    return;
+                }
+
+                session.LastRecognizedText = recognizedText;
 
                 IReadOnlyList<TranslatedOverlayItem> overlayItems =
                     await CreateTranslatedOverlayItemsAsync(ocrResult.Lines, cancellationToken);
@@ -295,7 +397,9 @@ public partial class MainWindow : Window
                         Environment.NewLine,
                         overlayItems.Select(static item => item.Text));
                     MetricsText.Text = $"Lines: {ocrResult.Lines.Count} / Words: {wordCount}";
-                    StatusText.Text = $"Overlay translated at {DateTime.Now:HH:mm:ss}";
+                    StatusText.Text = initiatedByAuto
+                        ? $"Auto translated at {DateTime.Now:HH:mm:ss}"
+                        : $"Overlay translated at {DateTime.Now:HH:mm:ss}";
                     EngineBadgeText.Text = CreateEngineBadgeText(ocrResult.EngineKind);
                 });
             }
@@ -311,23 +415,27 @@ public partial class MainWindow : Window
         }
         finally
         {
-            if (overlaySessions.ContainsKey(session.Overlay))
-            {
-                await Dispatcher.InvokeAsync(session.Overlay.ShowControls);
-            }
-
             if (ReferenceEquals(session.Cancellation, currentCancellation))
             {
                 session.Cancellation.Dispose();
                 session.Cancellation = null;
             }
 
+            session.IsTranslationRunning = false;
+
             if (overlaySessions.ContainsKey(session.Overlay))
             {
                 session.Overlay.SetTranslationRunning(false);
             }
 
-            SetTranslationState(isRunning: false, StatusText.Text);
+            if (!initiatedByAuto)
+            {
+                SetTranslationState(isRunning: false, StatusText.Text);
+            }
+            else
+            {
+                RefreshActionButtons();
+            }
         }
     }
 
@@ -335,11 +443,13 @@ public partial class MainWindow : Window
     {
         foreach (OverlaySession session in overlaySessions.Values.ToArray())
         {
+            StopOverlayAutoTranslation(session);
             session.Cancellation?.Cancel();
             session.Cancellation?.Dispose();
             session.Cancellation = null;
 
             session.Overlay.ContinueTranslationRequested -= Overlay_ContinueTranslationRequested;
+            session.Overlay.AutoTranslationChanged -= Overlay_AutoTranslationChanged;
             session.Overlay.BoundsChanged -= Overlay_BoundsChanged;
             session.Overlay.Closed -= Overlay_Closed;
             session.Overlay.Close();
@@ -577,6 +687,20 @@ public partial class MainWindow : Window
             .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
     }
 
+    private static string NormalizeOverlayRecognizedText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            '\n',
+            text.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n')
+                .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+    }
+
     private ValueTask<OcrRecognitionResult> RecognizeTextAsync(
         SoftwareBitmap bitmap,
         CancellationToken cancellationToken)
@@ -585,12 +709,22 @@ public partial class MainWindow : Window
         {
             EngineSelection = GetSelectedEngine(),
             PaddleRuntimeMode = GetSelectedPaddleRuntimeMode(),
-            LanguageTag = string.IsNullOrWhiteSpace(LanguageTextBox.Text)
-                ? null
-                : LanguageTextBox.Text.Trim()
+            LanguageTag = GetSelectedOcrLanguage()
         };
 
         return ocrRecognizer.RecognizeAsync(bitmap, options, cancellationToken);
+    }
+
+    private string? GetSelectedOcrLanguage()
+    {
+        if (OcrLanguageBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string tag &&
+            !string.IsNullOrWhiteSpace(tag))
+        {
+            return tag.Trim();
+        }
+
+        return null;
     }
 
     private ITextTranslator CreateDeepSeekTranslator()
@@ -744,8 +878,6 @@ public partial class MainWindow : Window
         SelectRealtimeRegionButton.IsEnabled = !isBusy;
         RunOcrButton.IsEnabled = !isBusy && HasSelectedInput;
         TranslateButton.IsEnabled = !isBusy && !string.IsNullOrWhiteSpace(lastRecognizedText);
-        StartRealtimeButton.IsEnabled = !isBusy;
-        StartRealtimeButton.Content = "新建覆盖框";
         CancelButton.IsEnabled = isBusy || HasOverlayWindows;
     }
 
@@ -773,5 +905,11 @@ public partial class MainWindow : Window
         public TranslationOverlayWindow Overlay { get; }
 
         public CancellationTokenSource? Cancellation { get; set; }
+
+        public CancellationTokenSource? AutoCancellation { get; set; }
+
+        public string? LastRecognizedText { get; set; }
+
+        public bool IsTranslationRunning { get; set; }
     }
 }
